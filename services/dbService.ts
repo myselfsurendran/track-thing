@@ -59,10 +59,10 @@ export const getProfile = async (uid: string): Promise<UserProfile | null> => {
 };
 
 export const saveProfile = async (uid: string, profile: UserProfile): Promise<void> => {
-    const cleaned = cleanForFirestore(profile);
+    if (!uid) throw new Error('Missing uid');
     const userDocRef = doc(db, 'users', uid);
-    await setDoc(userDocRef, cleaned);
-};
+    await setDoc(userDocRef, profile, { merge: true }); // merge:true to avoid overwriting unintentionally
+  };
 
 
 // ----------------------------------------------------

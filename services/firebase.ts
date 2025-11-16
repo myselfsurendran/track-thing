@@ -11,41 +11,31 @@ import { firebaseConfig } from './firebaseConfig';
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Get Firebase services
-const auth = getAuth(app);
-const db = getFirestore(app);
+export const auth = getAuth(app);
+export const db = getFirestore(app);
 
-// Function for email/password sign-up
-export const signUpWithEmailPassword = async (email, password) => {
-    try {
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        return userCredential.user;
-    } catch (error) {
-        console.error("Sign-up failed:", error);
-        throw error;
-    }
-};
+// Sign up and return the created User object
+export async function signUpWithEmailPassword(email: string, password: string): Promise<User> {
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    // cred.user is the Firebase User
+    return cred.user;
+  } catch (err: any) {
+    // Re-throw with the same shape your UI expects (err.code present)
+    throw err;
+  }
+}
 
-// Function for email/password sign-in
-export const signInWithEmailPassword = async (email, password) => {
-    try {
-        const userCredential = await signInWithEmailAndPassword(auth, email, password);
-        return userCredential.user;
-    } catch (error) {
-        console.error("Sign-in failed:", error);
-        throw error;
-    }
-};
+// Sign in and return user
+export async function signInWithEmailPassword(email: string, password: string): Promise<User> {
+  try {
+    const cred = await signInWithEmailAndPassword(auth, email, password);
+    return cred.user;
+  } catch (err: any) {
+    throw err;
+  }
+}
 
-// Function for signing out
-export const signOutUser = async () => {
-    try {
-        await signOut(auth);
-    } catch (error) {
-        console.error("Sign-out failed:", error);
-        throw error;
-    }
-};
-
-
-export { app, auth, db };
+export async function signOutUser(): Promise<void> {
+  await firebaseSignOut(auth);
+}
