@@ -69,20 +69,20 @@ export const saveProfile = async (uid: string, profile: UserProfile): Promise<vo
 // GENERIC LOG MANAGEMENT
 // ----------------------------------------------------
 
-export const getLogs = async <T>(
-    uid: string,
-    logType: LogCollection
-): Promise<T[]> => {
-    const logCollectionRef = collection(db, 'users', uid, logType);
-    const q = query(logCollectionRef, orderBy('timestamp', 'desc'));
-    const snapshot = await getDocs(q);
-
-    return snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...(doc.data() as T)
-    }));
-};
-
+export const getLogs = async <T>(uid: string, logType: LogCollection): Promise<T[]> => {
+    try {
+      const logCollectionRef = collection(db, 'users', uid, logType);
+      const q = query(logCollectionRef, orderBy('timestamp', 'desc'));
+      const logSnapshot = await getDocs(q);
+      if (!logSnapshot || logSnapshot.empty) return [];
+      return logSnapshot.docs.map(d => ({ id: d.id, ...(d.data() as T) }));
+    } catch (err) {
+      console.error('getLogs error', err);
+      return [];
+    }
+  };
+  
+  
 
 // ADD LOG — now Firestore-safe
 export const addLog = async <T extends object>(

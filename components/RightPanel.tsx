@@ -100,31 +100,42 @@ const RightPanel: React.FC<RightPanelProps> = ({ activeTab, userProfile, dailyGo
 
   const todaysSummary = useMemo(() => {
     const todaysDateStr = new Date().toLocaleDateString();
-    const todaysMeals = mealLog.filter(m => new Date(m.timestamp).toLocaleDateString() === todaysDateStr);
-    const todaysWater = waterLog.filter(w => new Date(w.timestamp).toLocaleDateString() === todaysDateStr);
-
+    const todaysMeals = Array.isArray(mealLog) ? mealLog.filter(m => new Date(m.timestamp).toLocaleDateString() === todaysDateStr) : [];
+    const todaysWater = Array.isArray(waterLog) ? waterLog.filter(w => new Date(w.timestamp).toLocaleDateString() === todaysDateStr) : [];
+  
     const totals = { calories: 0, protein: 0, carbs: 0, fat: 0, water: 0 };
-    todaysMeals.flatMap(m => m.items || []).forEach(item => {
-      totals.calories += (item.calories ?? 0);
-      totals.protein += (item.protein ?? 0);
-      totals.carbs += (item.carbs ?? 0);
-      totals.fat += (item.fat ?? 0);
+  
+    // defensive: items may be missing or not an array
+    todaysMeals.forEach(m => {
+      const items = Array.isArray((m as any).items) ? (m as any).items : [];
+      items.forEach((item: any) => {
+        totals.calories += Number(item?.calories ?? 0);
+        totals.protein  += Number(item?.protein  ?? 0);
+        totals.carbs    += Number(item?.carbs    ?? 0);
+        totals.fat      += Number(item?.fat      ?? 0);
+      });
     });
-    totals.water = todaysWater.reduce((sum, w) => sum + (w.amount ?? 0), 0);
+  
+    totals.water = todaysWater.reduce((sum, w) => sum + Number(w?.amount ?? 0), 0);
     return totals;
   }, [mealLog, waterLog]);
+  
 
   const macroData = useMemo(() => {
-    const { protein, carbs, fat } = todaysSummary;
-    const totalMacros = (protein ?? 0) + (carbs ?? 0) + (fat ?? 0);
-    if (totalMacros === 0) return [];
-
+    const protein = Number(todaysSummary?.protein ?? 0);
+    const carbs   = Number(todaysSummary?.carbs ?? 0);
+    const fat     = Number(todaysSummary?.fat ?? 0);
+  
+    const totalMacros = protein + carbs + fat;
+    if (totalMacros <= 0) return [];
+  
     return [
-      { name: 'Protein', value: protein ?? 0 },
-      { name: 'Carbs', value: carbs ?? 0 },
-      { name: 'Fat', value: fat ?? 0 },
+      { name: 'Protein', value: protein },
+      { name: 'Carbs',   value: carbs },
+      { name: 'Fat',     value: fat },
     ];
   }, [todaysSummary]);
+  
 
   const nutritionContent = (
     <>

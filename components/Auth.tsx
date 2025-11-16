@@ -32,23 +32,37 @@ const Auth: React.FC = () => {
           }
         }
       } else {
-        const user = await signUpWithEmailPassword(email, password);
-        if (!user) throw new Error('Signup failed');
-
-        // Create initial profile with provided userId as username (if given)
-        const uid = user.uid;
+        const userCred = await signUpWithEmailPassword(email, password);
+        if (!userCred || !userCred.uid) throw new Error('Signup failed');
+        
+        const uid = userCred.uid;
+        
+        // Build initial profile
         const initialProfile: UserProfile = {
           id: uid,
-          name: user.displayName ?? '',
+          name: userCred.displayName ?? '',
           username: userId?.trim() || '',
           age: 0,
           weight: 0,
           height: 0,
+          neck: 0,
+          waist: 0,
+          hip: null,
+          gender: "Male",
+          activityLevel: "Moderate",
+          fitnessGoal: "Maintain Weight",
           bmi: 0,
           bfp: 0,
           tdee: 0,
-          sleepGoal: 480, // defaults — adjust if you want
+          sleepGoal: {
+            bedtime: "23:00",
+            wakeupTime: "07:00"
+          }
         };
+        
+        // 🔥 SAVE IT TO FIRESTORE (THIS IS WHAT YOU MISSED)
+        await setDoc(doc(db, "users", uid), initialProfile);
+        
         await dbService.saveProfile(uid, initialProfile);
       }
     } catch (err: any) {
