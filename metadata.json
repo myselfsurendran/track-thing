@@ -1,0 +1,5 @@
+{
+  "name": "AI Fitness Tracker",
+  "description": "A conversational fitness tracker that uses AI to log meals from natural language input. It provides a dashboard with nutritional summaries and personalized suggestions for improvement.",
+  "requestFramePermissions": []
+}
