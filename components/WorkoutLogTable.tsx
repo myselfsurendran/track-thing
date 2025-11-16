@@ -42,7 +42,7 @@ const WorkoutLogTable: React.FC<WorkoutLogTableProps> = ({ workouts, onUpdateWor
     if (field === 'name') {
         targetItem.name = value;
     } else {
-        const numValue = value ? parseFloat(value) : undefined;
+        const numValue = value ? parseFloat(value) : null;
         targetItem[field] = numValue;
     }
     
@@ -52,7 +52,7 @@ const WorkoutLogTable: React.FC<WorkoutLogTableProps> = ({ workouts, onUpdateWor
   
   const handleGeneralChange = (field: keyof WorkoutLogEntry, value: string) => {
       if(!editedWorkout) return;
-      const numValue = field === 'steps' ? (value ? parseInt(value) : undefined) : value;
+      const numValue = field === 'steps' ? (value ? parseInt(value) : null) : value;
       setEditedWorkout({ ...editedWorkout, [field]: numValue as any });
   };
 
@@ -66,7 +66,7 @@ const WorkoutLogTable: React.FC<WorkoutLogTableProps> = ({ workouts, onUpdateWor
     );
   }
   
-  const InputField = ({ value, onChange, placeholder }: { value: string | number | undefined, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void, placeholder?: string }) => (
+  const InputField = ({ value, onChange, placeholder }: { value: string | number | null, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void, placeholder?: string }) => (
     <input 
       type="text" 
       value={value ?? ''}

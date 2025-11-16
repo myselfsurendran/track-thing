@@ -1,3 +1,4 @@
+// App.tsx
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import Header from './components/Header';
 import ConversationalInput from './components/ConversationalInput';
@@ -14,10 +15,10 @@ import GlobalActions from './components/GlobalActions';
 import SummaryModal from './components/SummaryModal';
 import SuggestionModal from './components/SuggestionModal';
 import WaterTracker from './components/WaterTracker';
-import { auth, signInUserAnonymously } from './services/firebase';
-import { onAuthStateChanged, User } from 'firebase/auth';
+import { auth, signOutUser } from './services/firebase';
+import { onAuthStateChanged, User, getAuth, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import * as dbService from './services/dbService';
-
+import Auth from './components/Auth';
 
 type Tab = 'Nutrition' | 'Workout' | 'Sleep' | 'Water';
 
@@ -88,45 +89,53 @@ const App: React.FC = () => {
   }, []);
   
   const handleUpdateMeal = async (updatedMeal: MealLogEntry) => {
-      await dbService.updateLog(authUser!.uid, 'meals', updatedMeal.id, updatedMeal);
+      if (!authUser) return;
+      await dbService.updateLog(authUser.uid, 'meals', updatedMeal.id, updatedMeal);
       setMealLog(mealLog.map(m => m.id === updatedMeal.id ? updatedMeal : m));
   };
   const handleDeleteMeal = async (id: string) => {
+    if (!authUser) return;
     if (window.confirm("Are you sure you want to delete this entry?")) {
-        await dbService.deleteLog(authUser!.uid, 'meals', id);
+        await dbService.deleteLog(authUser.uid, 'meals', id);
         setMealLog(mealLog.filter(m => m.id !== id));
     }
   };
   
   const handleUpdateWorkout = async (updatedWorkout: WorkoutLogEntry) => {
-      await dbService.updateLog(authUser!.uid, 'workouts', updatedWorkout.id, updatedWorkout);
+      if (!authUser) return;
+      await dbService.updateLog(authUser.uid, 'workouts', updatedWorkout.id, updatedWorkout);
       setWorkoutLog(workoutLog.map(w => w.id === updatedWorkout.id ? updatedWorkout : w));
   };
   const handleDeleteWorkout = async (id: string) => {
+    if (!authUser) return;
     if (window.confirm("Are you sure you want to delete this entry?")) {
-        await dbService.deleteLog(authUser!.uid, 'workouts', id);
+        await dbService.deleteLog(authUser.uid, 'workouts', id);
         setWorkoutLog(workoutLog.filter(w => w.id !== id));
     }
   };
 
   const handleUpdateSleep = async (updatedSleep: SleepLogEntry) => {
-       await dbService.updateLog(authUser!.uid, 'sleep', updatedSleep.id, updatedSleep);
+       if (!authUser) return;
+       await dbService.updateLog(authUser.uid, 'sleep', updatedSleep.id, updatedSleep);
        setSleepLog(sleepLog.map(s => s.id === updatedSleep.id ? updatedSleep : s));
   };
   const handleDeleteSleep = async (id: string) => {
+    if (!authUser) return;
     if (window.confirm("Are you sure you want to delete this entry?")) {
-        await dbService.deleteLog(authUser!.uid, 'sleep', id);
+        await dbService.deleteLog(authUser.uid, 'sleep', id);
         setSleepLog(sleepLog.filter(s => s.id !== id));
     }
   };
   
   const handleUpdateWater = async (updatedWater: WaterLogEntry) => {
-      await dbService.updateLog(authUser!.uid, 'water', updatedWater.id, updatedWater);
+      if (!authUser) return;
+      await dbService.updateLog(authUser.uid, 'water', updatedWater.id, updatedWater);
       setWaterLog(waterLog.map(w => w.id === updatedWater.id ? updatedWater : w));
   };
   const handleDeleteWater = async (id: string) => {
+    if (!authUser) return;
     if (window.confirm("Are you sure you want to delete this entry?")) {
-        await dbService.deleteLog(authUser!.uid, 'water', id);
+        await dbService.deleteLog(authUser.uid, 'water', id);
         setWaterLog(waterLog.filter(w => w.id !== id));
     }
   };
@@ -222,16 +231,40 @@ const App: React.FC = () => {
     setWaterLog(prevLog => [newEntry, ...prevLog]);
   }, [authUser]);
 
-  const handleSignIn = async () => {
-    setIsAuthLoading(true);
+  const handleSignOut = async () => {
     try {
-        await signInUserAnonymously();
+      await signOutUser();
     } catch (e) {
-        setError("Could not sign in. Please check your connection or Firebase setup.");
-        setIsAuthLoading(false);
+      setError("Could not sign out. Please try again.");
     }
   };
 
+  // --- NEW: Change password handler (tries updatePassword, falls back to reauth prompt) ---
+  const handleChangePassword = useCallback(async (newPassword: string) => {
+    const authInstance = getAuth();
+    const user = authInstance.currentUser;
+    if (!user) throw new Error('Not signed in');
+
+    try {
+      await updatePassword(user, newPassword);
+      return;
+    } catch (err: any) {
+      // If recent login required, ask user for current password to reauthenticate.
+      if (err?.code === 'auth/requires-recent-login') {
+        const email = user.email;
+        if (!email) throw new Error('Please re-login to update password.');
+        const currentPassword = window.prompt('To change your password, please re-enter your current password:');
+        if (!currentPassword) throw new Error('Reauthentication canceled.');
+
+        const credential = EmailAuthProvider.credential(email, currentPassword);
+        await reauthenticateWithCredential(user, credential);
+        // Retry update
+        await updatePassword(user, newPassword);
+        return;
+      }
+      throw err;
+    }
+  }, []);
 
   if (isAuthLoading || (authUser && isLoading)) {
     return (
@@ -245,21 +278,7 @@ const App: React.FC = () => {
   }
   
   if (!authUser) {
-    return (
-      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-        <div className="w-full max-w-md bg-white rounded-lg shadow-2xl p-8 text-center">
-            <h1 className="text-3xl font-bold text-indigo-600 mb-2">Welcome to AI Fitness Tracker</h1>
-            <p className="text-slate-600 mb-8">Your personal fitness data will be securely stored in the cloud.</p>
-            {error && <div className="bg-red-100 text-red-700 p-3 rounded-md mb-6">{error}</div>}
-            <button
-              onClick={handleSignIn}
-              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-md transition duration-200"
-            >
-              Start Tracking
-            </button>
-        </div>
-      </div>
-    );
+    return <Auth />;
   }
 
   if (!userProfile || !dailyGoals) {
@@ -293,7 +312,7 @@ const App: React.FC = () => {
       {isSummaryModalOpen && <SummaryModal onClose={() => setSummaryModalOpen(false)} userProfile={userProfile} dailyGoals={dailyGoals} mealLog={todaysMeals} workoutLog={todaysWorkouts} sleepLog={latestSleep} />}
       {isSuggestionModalOpen && <SuggestionModal onClose={() => setSuggestionModalOpen(false)} userProfile={userProfile} dailyGoals={dailyGoals} />}
       
-      <Header name={userProfile.name} onEditProfile={() => setProfileModalOpen(true)} />
+      <Header name={userProfile.name} onEditProfile={() => setProfileModalOpen(true)} onSignOut={handleSignOut} />
       
       <main className="container mx-auto p-4 md:p-8">
         
@@ -353,6 +372,8 @@ const App: React.FC = () => {
                 workoutLog={workoutLog}
                 sleepLog={sleepLog}
                 waterLog={waterLog}
+                onChangePassword={handleChangePassword}
+                onSaveProfile={handleSaveProfile}  // <-- added
             />
           </div>
         </div>
