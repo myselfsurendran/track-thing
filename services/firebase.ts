@@ -1,28 +1,35 @@
+// src/services/firebase.ts
 import { initializeApp } from 'firebase/app';
 import {
   getAuth,
   setPersistence,
+  browserLocalPersistence,
   createUserWithEmailAndPassword,
-  inMemoryPersistence,
   signInWithEmailAndPassword,
   signOut,
-  User
+  User,
 } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
+import { firebaseConfig } from './firebaseConfig'; // keep your config here
 
-import { getFirestore, setDoc, doc } from 'firebase/firestore';
-import { firebaseConfig } from './firebaseConfig';
-
+// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
-// 🔥 IMPORTANT: correctly initialize persistence
+// IMPORTANT: enable persistent login in browser (localStorage) and await it.
+// This ensures auth is ready before other auth operations (prevents weird signOut bugs).
 (async () => {
-  await setPersistence(auth, inMemoryPersistence);
+  try {
+    await setPersistence(auth, browserLocalPersistence);
+    // console.log('Firebase auth persistence set to browserLocalPersistence');
+  } catch (err) {
+    console.error('Failed to set auth persistence:', err);
+  }
 })();
 
-// ------------------ SIGNUP ------------------
+// Sign up and return the created User object
 export async function signUpWithEmailPassword(email: string, password: string): Promise<User> {
   try {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
@@ -32,7 +39,7 @@ export async function signUpWithEmailPassword(email: string, password: string): 
   }
 }
 
-// ------------------ LOGIN ------------------
+// Sign in and return user
 export async function signInWithEmailPassword(email: string, password: string): Promise<User> {
   try {
     const cred = await signInWithEmailAndPassword(auth, email, password);
@@ -42,12 +49,11 @@ export async function signInWithEmailPassword(email: string, password: string): 
   }
 }
 
-// ------------------ LOGOUT ------------------
 export async function signOutUser(): Promise<void> {
   try {
     await signOut(auth);
   } catch (err) {
-    console.error("SignOut ERROR:", err);
+    console.error('SignOut ERROR:', err);
     throw err;
   }
 }

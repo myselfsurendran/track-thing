@@ -120,8 +120,6 @@ const App: React.FC = () => {
     setMealLog(prev => prev.map(m => (m.id === updatedMeal.id ? updatedMeal : m)));
   };
 
-  console.log('DEBUG mealLog sample:', Array.isArray(mealLog) ? mealLog[0] : mealLog);
-
 
   const handleDeleteMeal = async (id: string) => {
     if (!authUser) return;
