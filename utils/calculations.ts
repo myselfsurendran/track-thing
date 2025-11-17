@@ -77,40 +77,55 @@ export const calculateMetrics = (input: ProfileInput): UserProfile => {
  * Calculates daily calorie and macronutrient goals based on the user's profile.
  */
 export const calculateDailyGoals = (profile: UserProfile): DailyGoals => {
-    const { tdee, fitnessGoal, weight } = profile;
-    let calorieGoal = tdee;
-
-    switch (fitnessGoal) {
-        case 'Lose Weight':
-            calorieGoal -= 500; // 500 calorie deficit
-            break;
-        case 'Gain Muscle':
-            calorieGoal += 300; // 300 calorie surplus
-            break;
-        case 'Maintain Weight':
-        default:
-            // No change
-            break;
-    }
-    
-    const macros = macroProfiles[fitnessGoal];
-    // 4 calories per gram of protein/carbs, 9 calories per gram of fat
-    const protein = (calorieGoal * macros.protein) / 4;
-    const carbs = (calorieGoal * macros.carbs) / 4;
-    const fat = (calorieGoal * macros.fat) / 9;
-
-    // Water goal: ~35ml per kg of body weight
-    const water = weight * 35;
-
-    return {
-        calories: calorieGoal,
-        protein,
-        carbs,
-        fat,
-        water,
+    // protect inputs
+    const rawTdee = Number(profile.tdee || 0);
+    const weight = Number(profile.weight || 0);
+    const goal = profile.fitnessGoal || 'Maintain Weight';
+  
+    // base calorie target
+    let calorieGoal = Number.isFinite(rawTdee) && rawTdee > 0 ? Math.round(rawTdee) : 2000;
+  
+    if (goal === 'Lose Weight') calorieGoal -= 500;
+    if (goal === 'Gain Muscle') calorieGoal += 300;
+  
+    // safety floor
+    const MIN_CALORIES = 1200;
+    calorieGoal = Math.max(MIN_CALORIES, Math.round(calorieGoal));
+  
+    // --- Protein: grams per kg (preferred for muscle) ---
+    const proteinFactorByGoal: Record<FitnessGoal, number> = {
+      'Lose Weight': 2.0,
+      'Maintain Weight': 1.6,
+      'Gain Muscle': 2.0,
     };
-};
-
+    const proteinG = Math.max(0, Math.round((proteinFactorByGoal[goal] || 1.6) * weight));
+    const proteinCals = proteinG * 4;
+  
+    // --- Fat: sensible percentage of calories ---
+    const fatPercentByGoal: Record<FitnessGoal, number> = {
+      'Lose Weight': 0.28,
+      'Maintain Weight': 0.25,
+      'Gain Muscle': 0.25,
+    };
+    const fatCals = Math.round(calorieGoal * (fatPercentByGoal[goal] ?? 0.25));
+    const fatG = Math.max(0, Math.round(fatCals / 9));
+  
+    // --- Carbs: remaining calories -->
+    const remainingCals = Math.max(0, calorieGoal - proteinCals - fatCals);
+    const carbsG = Math.round(remainingCals / 4);
+  
+    // Water (ml)
+    const water = Math.round(weight > 0 ? weight * 35 : 2000);
+  
+    return {
+      calories: calorieGoal,
+      protein: proteinG,
+      carbs: carbsG,
+      fat: fatG,
+      water,
+    };
+  };
+  
 /**
  * Calculates a sleep score based on adherence to goals.
  * @param log - The sleep log entry for a given night.
