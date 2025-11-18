@@ -3,7 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 
 interface ChartData {
   date: string;
-  calories: number;
+  calories?: number | null;
 }
 
 interface CalorieHistoryChartProps {
@@ -11,14 +11,18 @@ interface CalorieHistoryChartProps {
 }
 
 const CalorieHistoryChart: React.FC<CalorieHistoryChartProps> = ({ data }) => {
-  if (!data || data.length === 0) {
+  const safeData = Array.isArray(data)
+    ? data.map(d => ({ date: d.date ?? '', calories: Number(d.calories ?? 0) }))
+    : [];
+
+  if (!safeData.length || safeData.every(d => !d.calories)) {
     return <p className="text-slate-500 text-center py-10">Log meals to see your calorie history.</p>;
   }
 
   return (
     <div style={{ width: '100%', height: 250 }}>
       <ResponsiveContainer>
-        <BarChart data={data} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
+        <BarChart data={safeData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
           <XAxis dataKey="date" stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} />
           <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} />

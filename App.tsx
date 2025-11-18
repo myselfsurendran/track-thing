@@ -1,4 +1,4 @@
-// App.tsx
+// src/App.tsx
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import Header from './components/Header';
 import ConversationalInput from './components/ConversationalInput';
@@ -20,6 +20,7 @@ import Auth from './components/Auth';
 import { auth, signOutUser } from './services/firebase';
 import { onAuthStateChanged, User, getAuth, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import * as dbService from './services/dbService';
+import { toLocalISODate } from './utils/dateHelpers';
 
 type Tab = 'Nutrition' | 'Workout' | 'Sleep' | 'Water';
 
@@ -35,11 +36,10 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('Nutrition');
 
-  const [isLoading, setIsLoading] = useState(true); // loading user data (logs/profile)
-  const [isAuthLoading, setIsAuthLoading] = useState(true); // loading auth state
+  const [isLoading, setIsLoading] = useState(true);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [authUser, setAuthUser] = useState<User | null>(null);
 
-  // NEW: explicit profile load state
   const [profileLoaded, setProfileLoaded] = useState(false);
   const [userHasProfile, setUserHasProfile] = useState<boolean | null>(null);
 
@@ -47,20 +47,19 @@ const App: React.FC = () => {
   const [isSummaryModalOpen, setSummaryModalOpen] = useState(false);
   const [isSuggestionModalOpen, setSuggestionModalOpen] = useState(false);
 
+  // selected date (local)
+  const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
+
   const dailyGoals = useMemo<DailyGoals | null>(() => {
     if (!userProfile) return null;
     return calculateDailyGoals(userProfile);
   }, [userProfile]);
 
-  // -------------------
-  // Auth state & profile loading
-  // -------------------
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setIsAuthLoading(false);
 
       if (!user) {
-        // signed out — clear everything
         setAuthUser(null);
         setUserProfile(null);
         setMealLog([]);
@@ -73,26 +72,24 @@ const App: React.FC = () => {
         return;
       }
 
-      // signed in
       setAuthUser(user);
       setIsLoading(true);
       setProfileLoaded(false);
       setUserHasProfile(null);
 
       try {
-        const profile = await dbService.getProfile(user.uid); // should return null if no doc
-        setUserProfile(profile);
-        setUserHasProfile(!!profile); // true if object, false if null
+        const profile = await dbService.getProfile(user.uid);
+        setUserProfile(profile ?? null);
+        setUserHasProfile(!!profile);
 
         if (profile) {
-          // Only fetch logs if profile exists
           const [meals, workouts, sleep, water] = await Promise.all([
             dbService.getLogs<MealLogEntry>(user.uid, 'meals').catch(() => []),
             dbService.getLogs<WorkoutLogEntry>(user.uid, 'workouts').catch(() => []),
             dbService.getLogs<SleepLogEntry>(user.uid, 'sleep').catch(() => []),
             dbService.getLogs<WaterLogEntry>(user.uid, 'water').catch(() => []),
           ]);
-          
+
           setMealLog(Array.isArray(meals) ? meals : []);
           setWorkoutLog(Array.isArray(workouts) ? workouts : []);
           setSleepLog(Array.isArray(sleep) ? sleep : []);
@@ -111,15 +108,12 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // -------------------
-  // Handlers
-  // -------------------
+  // handlers for logs/profile (unchanged)
   const handleUpdateMeal = async (updatedMeal: MealLogEntry) => {
     if (!authUser) return;
     await dbService.updateLog(authUser.uid, 'meals', updatedMeal.id, updatedMeal);
     setMealLog(prev => prev.map(m => (m.id === updatedMeal.id ? updatedMeal : m)));
   };
-
 
   const handleDeleteMeal = async (id: string) => {
     if (!authUser) return;
@@ -174,7 +168,7 @@ const App: React.FC = () => {
       const profileToSave = { ...profile, id: authUser.uid };
       await dbService.saveProfile(authUser.uid, profileToSave);
       setUserProfile(profileToSave);
-      setUserHasProfile(true); // mark that profile exists now
+      setUserHasProfile(true);
       setProfileModalOpen(false);
     } catch (e) {
       console.error('Failed to save profile', e);
@@ -209,7 +203,7 @@ const App: React.FC = () => {
       const parsedData = await parseWorkoutFromText(text);
       const newEntryData = {
         ...parsedData,
-        steps: steps > 0 ? steps : undefined,
+        steps: steps > 0 ? steps : null,
         timestamp: new Date().toISOString(),
       };
       const newEntry = await dbService.addLog(authUser.uid, 'workouts', newEntryData);
@@ -233,7 +227,7 @@ const App: React.FC = () => {
       return;
     }
 
-    const duration = (wakeupDate.getTime() - sleepDate.getTime()) / (1000 * 60); // minutes
+    const duration = (wakeupDate.getTime() - sleepDate.getTime()) / (1000 * 60);
     const logData = { sleepTime: sleepDate.toISOString(), wakeupTime: wakeupDate.toISOString(), duration };
     const score = calculateSleepScore(logData, userProfile.sleepGoal);
 
@@ -265,7 +259,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Change password handler (tries updatePassword, falls back to reauth prompt)
   const handleChangePassword = useCallback(async (newPassword: string) => {
     const authInstance = getAuth();
     const user = authInstance.currentUser;
@@ -290,11 +283,22 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // -------------------
-  // Rendering gating logic (explicit and robust)
-  // -------------------
+  // date handlers (local)
+  const goPrevDay = () => setSelectedDate(d => {
+    const n = new Date(d);
+    n.setDate(n.getDate() - 1);
+    return n;
+  });
+  const goNextDay = () => setSelectedDate(d => {
+    const n = new Date(d);
+    n.setDate(n.getDate() + 1);
+    return n;
+  });
+  const onPickDate = (iso: string) => {
+    setSelectedDate(new Date(iso + 'T00:00:00'));
+  };
 
-  // 1) still loading auth status?
+  // rendering gate
   if (isAuthLoading) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center">
@@ -306,12 +310,8 @@ const App: React.FC = () => {
     );
   }
 
-  // 2) not signed in -> show Auth
-  if (!authUser) {
-    return <Auth />;
-  }
+  if (!authUser) return <Auth />;
 
-  // 3) authUser exists but profile load not finished -> spinner
   if (!profileLoaded) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center">
@@ -323,13 +323,10 @@ const App: React.FC = () => {
     );
   }
 
-  // 4) profileLoaded is true:
-  // if NO profile doc in Firestore — show ProfileSetup (only for users with no profile document)
   if (userHasProfile === false) {
     return <ProfileSetup onSave={handleSaveProfile} />;
   }
 
-  // Otherwise proceed to main UI (profile exists)
   const TabButton: React.FC<{ tabName: Tab }> = ({ tabName }) => {
     const isActive = activeTab === tabName;
     return (
@@ -343,15 +340,29 @@ const App: React.FC = () => {
     );
   };
 
-  const todaysDateStr = new Date().toLocaleDateString();
-  const todaysMeals = mealLog.filter(m => new Date(m.timestamp).toLocaleDateString() === todaysDateStr);
-  const todaysWorkouts = workoutLog.filter(w => new Date(w.timestamp).toLocaleDateString() === todaysDateStr);
-  const latestSleep = sleepLog.length > 0 ? [sleepLog[0]] : [];
+  // local iso for selectedDate
+  const selectedIso = toLocalISODate(selectedDate);
+
+  const filterByDate = (timestamp?: string) => {
+    if (!timestamp) return false;
+    try {
+      return toLocalISODate(timestamp) === selectedIso;
+    } catch {
+      return false;
+    }
+  };
+
+  const visibleMeals = mealLog.filter(m => filterByDate(m.timestamp));
+  const visibleWorkouts = workoutLog.filter(w => filterByDate(w.timestamp));
+  const visibleSleep = sleepLog.filter(s => filterByDate(s.timestamp));
+  const visibleWater = waterLog.filter(w => filterByDate(w.timestamp));
+
+  const latestSleep = visibleSleep.length > 0 ? [visibleSleep[0]] : [];
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
       {isProfileModalOpen && <ProfileSetup onSave={handleSaveProfile} initialProfile={userProfile} onClose={() => setProfileModalOpen(false)} />}
-      {isSummaryModalOpen && <SummaryModal onClose={() => setSummaryModalOpen(false)} userProfile={userProfile!} dailyGoals={dailyGoals!} mealLog={todaysMeals} workoutLog={todaysWorkouts} sleepLog={latestSleep} />}
+      {isSummaryModalOpen && <SummaryModal onClose={() => setSummaryModalOpen(false)} userProfile={userProfile!} dailyGoals={dailyGoals!} mealLog={visibleMeals} workoutLog={visibleWorkouts} sleepLog={latestSleep} />}
       {isSuggestionModalOpen && <SuggestionModal onClose={() => setSuggestionModalOpen(false)} userProfile={userProfile!} dailyGoals={dailyGoals!} />}
 
       <Header name={userProfile?.name ?? userProfile?.username ?? 'User'} onEditProfile={() => setProfileModalOpen(true)} onSignOut={handleSignOut} />
@@ -367,7 +378,14 @@ const App: React.FC = () => {
           </div>
         )}
 
-        <GlobalActions onSummarize={() => setSummaryModalOpen(true)} onSuggest={() => setSuggestionModalOpen(true)} />
+        <GlobalActions
+          selectedDate={selectedDate}
+          onPickDate={onPickDate}
+          onPrevDay={goPrevDay}
+          onNextDay={goNextDay}
+          onSummarize={() => setSummaryModalOpen(true)}
+          onSuggest={() => setSuggestionModalOpen(true)}
+        />
 
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-8 mt-6">
           <div className="lg:col-span-3 space-y-8">
@@ -383,23 +401,23 @@ const App: React.FC = () => {
             {activeTab === 'Nutrition' && (
               <>
                 <ConversationalInput onLogMeal={handleLogMeal} isLoading={isLoggingMeal} />
-                <MealLogTable meals={mealLog} onUpdateMeal={handleUpdateMeal} onDeleteMeal={handleDeleteMeal} />
+                <MealLogTable meals={visibleMeals} selectedDate={selectedDate} onUpdateMeal={handleUpdateMeal} onDeleteMeal={handleDeleteMeal} />
               </>
             )}
 
             {activeTab === 'Workout' && (
               <>
                 <ConversationalWorkoutInput onLogWorkout={handleLogWorkout} isLoading={isLoggingWorkout} />
-                <WorkoutLogTable workouts={workoutLog} onUpdateWorkout={handleUpdateWorkout} onDeleteWorkout={handleDeleteWorkout} />
+                <WorkoutLogTable workouts={visibleWorkouts} selectedDate={selectedDate} onUpdateWorkout={handleUpdateWorkout} onDeleteWorkout={handleDeleteWorkout} />
               </>
             )}
 
             {activeTab === 'Sleep' && (
-              <SleepTracker sleepLog={sleepLog} onLogSleep={handleLogSleep} onUpdateSleep={handleUpdateSleep} onDeleteSleep={handleDeleteSleep} />
+              <SleepTracker sleepLog={visibleSleep} onLogSleep={handleLogSleep} onUpdateSleep={handleUpdateSleep} onDeleteSleep={handleDeleteSleep} />
             )}
 
             {activeTab === 'Water' && (
-              <WaterTracker waterLog={waterLog} onLogWater={handleLogWater} onUpdateWater={handleUpdateWater} onDeleteWater={handleDeleteWater} />
+              <WaterTracker waterLog={visibleWater} onLogWater={handleLogWater} onUpdateWater={handleUpdateWater} onDeleteWater={handleDeleteWater} />
             )}
           </div>
 
@@ -412,6 +430,7 @@ const App: React.FC = () => {
               workoutLog={workoutLog}
               sleepLog={sleepLog}
               waterLog={waterLog}
+              selectedDate={selectedDate}
               onChangePassword={handleChangePassword}
               onSaveProfile={handleSaveProfile}
             />

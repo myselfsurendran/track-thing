@@ -1,3 +1,4 @@
+// src/components/RightPanel.tsx
 import React, { useMemo } from 'react';
 import { MealLogEntry, DailyGoals, UserProfile, WorkoutLogEntry, SleepLogEntry, WaterLogEntry } from '../types';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
@@ -8,6 +9,7 @@ import SleepScoreHistoryChart from './SleepScoreHistoryChart';
 import StepsHistoryChart from './StepsHistoryChart';
 import WorkoutFrequencyChart from './WorkoutFrequencyChart';
 import WaterHistoryChart from './WaterHistoryChart';
+import { toLocalISODate } from '../utils/dateHelpers';
 
 type Tab = 'Nutrition' | 'Workout' | 'Sleep' | 'Water';
 
@@ -19,10 +21,10 @@ interface RightPanelProps {
   workoutLog: WorkoutLogEntry[];
   sleepLog: SleepLogEntry[];
   waterLog: WaterLogEntry[];
+  selectedDate?: Date;
   onChangePassword?: (newPassword: string) => Promise<void>;
-  onSaveProfile?: (p: UserProfile) => Promise<void>;
+  onSaveProfile?: (profile: UserProfile) => Promise<void>;
 }
-
 
 const COLORS = {
   protein: '#38bdf8', // sky-400
@@ -32,22 +34,21 @@ const COLORS = {
 
 const GoalItem: React.FC<{ icon: string; label: string; current: number; target: number; unit: string; }> = ({ icon, label, current, target, unit }) => {
   const isOver = current > target;
-  const safeCurrent = Number.isFinite(current) ? current : 0;
   return (
     <div className="flex flex-col items-center text-center">
       <div className="text-3xl mb-1">{icon}</div>
       <div className="text-sm text-slate-600">{label}</div>
       <div className={`text-lg font-bold ${isOver ? 'text-rose-500' : 'text-slate-800'}`}>
-        {safeCurrent.toFixed(0)}
+        {Number.isFinite(current) ? current.toFixed(0) : 0}
       </div>
-      <div className="text-xs text-slate-500">/ {target.toFixed(0)} {unit}</div>
+      <div className="text-xs text-slate-500">/ {Number.isFinite(target) ? target.toFixed(0) : 0} {unit}</div>
     </div>
   );
 };
 
-const TodaysGoalsCard: React.FC<{ summary: any; goals: DailyGoals }> = ({ summary, goals }) => (
+const TodaysGoalsCard: React.FC<{ summary: any, goals: DailyGoals, dateLabel: string }> = ({ summary, goals, dateLabel }) => (
   <div className="bg-white p-6 rounded-lg shadow-md">
-    <h3 className="text-xl font-semibold mb-4 text-indigo-600">Today's Goals</h3>
+    <h3 className="text-xl font-semibold mb-4 text-indigo-600">Goals — {dateLabel}</h3>
     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
       <GoalItem icon="🔥" label="Calories" current={summary.calories} target={goals.calories} unit="kcal" />
       <GoalItem icon="💪" label="Protein" current={summary.protein} target={goals.protein} unit="g" />
@@ -57,91 +58,103 @@ const TodaysGoalsCard: React.FC<{ summary: any; goals: DailyGoals }> = ({ summar
   </div>
 );
 
-const RightPanel: React.FC<RightPanelProps> = ({ activeTab, userProfile, dailyGoals, mealLog, workoutLog, sleepLog, waterLog, onChangePassword, onSaveProfile }) => {
+const RightPanel: React.FC<RightPanelProps> = ({ activeTab, userProfile, dailyGoals, mealLog, workoutLog, sleepLog, waterLog, selectedDate }) => {
+  const safeMealLog = Array.isArray(mealLog) ? mealLog : [];
+  const safeWorkoutLog = Array.isArray(workoutLog) ? workoutLog : [];
+  const safeSleepLog = Array.isArray(sleepLog) ? sleepLog : [];
+  const safeWaterLog = Array.isArray(waterLog) ? waterLog : [];
+
+  const refDate = selectedDate ? new Date(selectedDate) : new Date();
+  const dateLabel = refDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 
   const historyData = useMemo(() => {
     const last7Days = Array.from({ length: 7 }).map((_, i) => {
-      const d = new Date();
+      const d = new Date(refDate);
       d.setHours(0, 0, 0, 0);
-      d.setDate(d.getDate() - i);
+      d.setDate(d.getDate() - (6 - i));
       return d;
-    }).reverse();
+    });
 
     return last7Days.map(date => {
-      const dateStr = date.toLocaleDateString();
-      const dayMeals = mealLog.filter(meal => new Date(meal.timestamp).toLocaleDateString() === dateStr);
-      const dayWorkouts = workoutLog.filter(w => new Date(w.timestamp).toLocaleDateString() === dateStr);
-      const daySleep = sleepLog.find(s => new Date(s.timestamp).toLocaleDateString() === dateStr);
-      const dayWater = waterLog.filter(w => new Date(w.timestamp).toLocaleDateString() === dateStr);
+      const dateIso = toLocalISODate(date);
+
+      const dayMeals = safeMealLog.filter(meal => toLocalISODate(meal.timestamp) === dateIso);
+      const dayWorkouts = safeWorkoutLog.filter(w => toLocalISODate(w.timestamp) === dateIso);
+      const daySleep = safeSleepLog.find(s => toLocalISODate(s.timestamp) === dateIso);
+      const dayWater = safeWaterLog.filter(w => toLocalISODate(w.timestamp) === dateIso);
 
       const mealSummary = { calories: 0, protein: 0, carbs: 0, fat: 0 };
       dayMeals.forEach(meal => {
-        (meal.items || []).forEach(item => {
-          mealSummary.calories += (item.calories ?? 0);
-          mealSummary.protein += (item.protein ?? 0);
-          mealSummary.carbs += (item.carbs ?? 0);
-          mealSummary.fat += (item.fat ?? 0);
+        const items = Array.isArray((meal as any).items) ? (meal as any).items : [];
+        items.forEach((item: any) => {
+          mealSummary.calories += Number(item?.calories ?? 0);
+          mealSummary.protein += Number(item?.protein ?? 0);
+          mealSummary.carbs += Number(item?.carbs ?? 0);
+          mealSummary.fat += Number(item?.fat ?? 0);
         });
       });
 
-      const totalSteps = dayWorkouts.reduce((sum, w) => sum + (w.steps ?? 0), 0);
-      const totalWater = dayWater.reduce((sum, w) => sum + (w.amount ?? 0), 0);
+      const totalSteps = dayWorkouts.reduce((sum, w) => sum + Number(w.steps ?? 0), 0);
+      const totalWater = dayWater.reduce((sum, w) => sum + Number(w?.amount ?? 0), 0);
+
+      const workoutsAgg = dayWorkouts.reduce((acc: Record<string, number>, w) => {
+        const key = w.workoutType || 'Other';
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
 
       return {
         date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-        ...mealSummary,
-        sleepScore: daySleep?.score ?? 0,
+        calories: mealSummary.calories,
+        protein: mealSummary.protein,
+        carbs: mealSummary.carbs,
+        fat: mealSummary.fat,
+        sleepScore: daySleep?.score ?? daySleep?.sleepScore ?? 0,
         steps: totalSteps,
         water: totalWater,
-        ...dayWorkouts.reduce((acc, w) => ({ ...acc, [w.workoutType]: (acc[w.workoutType] || 0) + 1 }), {} as Record<string, number>)
+        ...workoutsAgg,
       };
     });
-  }, [mealLog, workoutLog, sleepLog, waterLog]);
+  }, [safeMealLog, safeWorkoutLog, safeSleepLog, safeWaterLog, refDate]);
 
   const todaysSummary = useMemo(() => {
-    const todaysDateStr = new Date().toLocaleDateString();
-    const todaysMeals = Array.isArray(mealLog) ? mealLog.filter(m => new Date(m.timestamp).toLocaleDateString() === todaysDateStr) : [];
-    const todaysWater = Array.isArray(waterLog) ? waterLog.filter(w => new Date(w.timestamp).toLocaleDateString() === todaysDateStr) : [];
-  
+    const dateIso = toLocalISODate(refDate);
+    const todaysMeals = safeMealLog.filter(m => toLocalISODate(m.timestamp) === dateIso);
+    const todaysWater = safeWaterLog.filter(w => toLocalISODate(w.timestamp) === dateIso);
+
     const totals = { calories: 0, protein: 0, carbs: 0, fat: 0, water: 0 };
-  
-    // defensive: items may be missing or not an array
     todaysMeals.forEach(m => {
       const items = Array.isArray((m as any).items) ? (m as any).items : [];
       items.forEach((item: any) => {
         totals.calories += Number(item?.calories ?? 0);
-        totals.protein  += Number(item?.protein  ?? 0);
-        totals.carbs    += Number(item?.carbs    ?? 0);
-        totals.fat      += Number(item?.fat      ?? 0);
+        totals.protein += Number(item?.protein ?? 0);
+        totals.carbs += Number(item?.carbs ?? 0);
+        totals.fat += Number(item?.fat ?? 0);
       });
     });
-  
+
     totals.water = todaysWater.reduce((sum, w) => sum + Number(w?.amount ?? 0), 0);
     return totals;
-  }, [mealLog, waterLog]);
-  
+  }, [safeMealLog, safeWaterLog, refDate]);
 
   const macroData = useMemo(() => {
     const protein = Number(todaysSummary?.protein ?? 0);
-    const carbs   = Number(todaysSummary?.carbs ?? 0);
-    const fat     = Number(todaysSummary?.fat ?? 0);
-  
-    const totalMacros = protein + carbs + fat;
-    if (totalMacros <= 0) return [];
-  
+    const carbs = Number(todaysSummary?.carbs ?? 0);
+    const fat = Number(todaysSummary?.fat ?? 0);
+    const total = protein + carbs + fat;
+    if (total <= 0) return [];
     return [
       { name: 'Protein', value: protein },
-      { name: 'Carbs',   value: carbs },
-      { name: 'Fat',     value: fat },
+      { name: 'Carbs', value: carbs },
+      { name: 'Fat', value: fat },
     ];
   }, [todaysSummary]);
-  
 
   const nutritionContent = (
     <>
-      <TodaysGoalsCard summary={todaysSummary} goals={dailyGoals} />
+      <TodaysGoalsCard summary={todaysSummary} goals={dailyGoals} dateLabel={dateLabel} />
       <div className="bg-white rounded-lg p-6 shadow-md">
-        <h3 className="text-xl font-semibold mb-4 text-indigo-600">Macronutrient Distribution</h3>
+        <h3 className="text-xl font-semibold mb-4 text-indigo-600">Macronutrient Distribution ({dateLabel})</h3>
         {macroData.length > 0 ? (
           <div style={{ width: '100%', height: 300 }}>
             <ResponsiveContainer>
@@ -151,17 +164,19 @@ const RightPanel: React.FC<RightPanelProps> = ({ activeTab, userProfile, dailyGo
                   <Cell key={`cell-carbs`} fill={COLORS.carbs} />
                   <Cell key={`cell-fat`} fill={COLORS.fat} />
                 </Pie>
-                <Tooltip contentStyle={{ background: 'rgba(255, 255, 255, 0.9)', borderColor: '#e2e8f0', borderRadius: '0.5rem' }} formatter={(value: number, name) => [`${Number(value).toFixed(1)}g`, name]} />
+                <Tooltip contentStyle={{ background: 'rgba(255, 255, 255, 0.9)', borderColor: '#e2e8f0', borderRadius: '0.5rem' }} formatter={(value: number, name) => [`${value.toFixed(1)}g`, name]} />
                 <Legend iconType="circle" />
               </PieChart>
             </ResponsiveContainer>
           </div>
-        ) : (<p className="text-slate-500 text-center py-12">Log a meal today to see your macro breakdown.</p>)}
+        ) : (<p className="text-slate-500 text-center py-12">Log a meal on this date to see your macro breakdown.</p>)}
       </div>
+
       <div className="bg-white rounded-lg p-6 shadow-md">
         <h3 className="text-xl font-semibold mb-4 text-indigo-600">Calorie History (7 Days)</h3>
         <CalorieHistoryChart data={historyData} />
       </div>
+
       <div className="bg-white rounded-lg p-6 shadow-md">
         <h3 className="text-xl font-semibold mb-4 text-indigo-600">Macro History (7 Days)</h3>
         <MacroHistoryChart data={historyData} />
@@ -193,8 +208,8 @@ const RightPanel: React.FC<RightPanelProps> = ({ activeTab, userProfile, dailyGo
 
   const waterContent = (
     <>
-      <div className="bg-white rounded-lg p-6 shadow-md">
-        <h3 className="text-xl font-semibold mb-4 text-indigo-600">Today's Hydration</h3>
+      <div className="bg-white p-6 rounded-lg shadow-md">
+        <h3 className="text-xl font-semibold mb-4 text-indigo-600">Hydration — {dateLabel}</h3>
         <div className="grid grid-cols-1">
           <GoalItem icon="💧" label="Water" current={todaysSummary.water} target={dailyGoals.water} unit="ml" />
         </div>
@@ -208,7 +223,7 @@ const RightPanel: React.FC<RightPanelProps> = ({ activeTab, userProfile, dailyGo
 
   return (
     <div className="space-y-6">
-      <ProfileDetails profile={userProfile} onSaveProfile={onSaveProfile} onChangePassword={onChangePassword} />
+      <ProfileDetails profile={userProfile} />
       {activeTab === 'Nutrition' && nutritionContent}
       {activeTab === 'Workout' && workoutContent}
       {activeTab === 'Sleep' && sleepContent}
