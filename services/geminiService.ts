@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { DailyGoals, MealLogEntry, SleepLogEntry, UserProfile, WorkoutLogEntry } from '../types';
+import { UserProfile, MealLogEntry, WorkoutLogEntry, SleepLogEntry, DailyGoals } from '../types';
 
 if (!process.env.API_KEY) {
     throw new Error("API_KEY environment variable not set");
@@ -137,65 +137,147 @@ export const parseWorkoutFromText = async (text: string): Promise<Omit<WorkoutLo
     }
 };
 
+
+// FINAL VERSION — NO WATER ANYWHERE
+
 export const getDailySummary = async (
   userProfile: UserProfile,
-  mealLog: MealLogEntry[],
-  workoutLog: WorkoutLogEntry[],
-  sleepLog: SleepLogEntry[],
-  dailyGoals: DailyGoals
+  mealLogToday: MealLogEntry[],
+  workoutLogToday: WorkoutLogEntry[],
+  sleepLogToday: SleepLogEntry[],
+  dailyGoals: DailyGoals,
+  yesterdayLogs?: {
+    mealLogYesterday?: MealLogEntry[],
+    workoutLogYesterday?: WorkoutLogEntry[],
+    sleepLogYesterday?: SleepLogEntry[],
+  }
 ): Promise<string> => {
   try {
-    const mealSummary = mealLog.reduce((acc, entry) => {
-        entry.items.forEach(item => {
-            acc.calories += item.calories;
-            acc.protein += item.protein;
-            acc.carbs += item.carbs;
-            acc.fat += item.fat;
+    // --- helper reducers ---
+    const aggregateMeals = (meals: MealLogEntry[] = []) => {
+      const agg = { calories: 0, protein: 0, carbs: 0, fat: 0, meals: meals.length };
+      meals.forEach(m => {
+        const items = Array.isArray((m as any).items) ? (m as any).items : [];
+        items.forEach((it: any) => {
+          agg.calories += Number(it?.calories ?? 0);
+          agg.protein += Number(it?.protein ?? 0);
+          agg.carbs += Number(it?.carbs ?? 0);
+          agg.fat += Number(it?.fat ?? 0);
         });
-        return acc;
-    }, { calories: 0, protein: 0, carbs: 0, fat: 0 });
-    
-    const latestSleep = sleepLog.length > 0 ? sleepLog[0] : null;
+      });
+      return agg;
+    };
 
-    const detailedPrompt = `
-You are an expert AI fitness and wellness coach.
-Your task is to provide a comprehensive, encouraging, and actionable summary of the user's day.
+    const aggregateWorkouts = (workouts: WorkoutLogEntry[] = []) => {
+      const agg = { sessions: 0, steps: 0, durationMin: 0, types: {} as Record<string, number> };
+      workouts.forEach(w => {
+        agg.sessions++;
+        agg.steps += Number((w as any).steps ?? 0);
+        const items = Array.isArray((w as any).items) ? (w as any).items : [];
+        items.forEach((it: any) => { agg.durationMin += Number(it?.duration ?? 0); });
+        const key = (w as any).workoutType || 'Other';
+        agg.types[key] = (agg.types[key] || 0) + 1;
+      });
+      return agg;
+    };
 
-**User Profile & Goals:**
-- Primary Goal: **${userProfile.fitnessGoal}**
-- Daily Calorie Goal: ${dailyGoals.calories.toFixed(0)} kcal
-- Daily Protein Goal: ${dailyGoals.protein.toFixed(1)} g
+    const aggregateSleep = (sleepArr: SleepLogEntry[] = []) => {
+      if (!sleepArr || sleepArr.length === 0)
+        return { nights: 0, avgMin: 0, latestScore: 0 };
+      const durations = sleepArr.map(s => Number((s as any).duration ?? 0)); // minutes
+      const scores = sleepArr.map(s => Number((s as any).score ?? (s as any).sleepScore ?? 0));
+      const sum = durations.reduce((a, b) => a + b, 0);
+      return {
+        nights: sleepArr.length,
+        avgMin: sum / durations.length,
+        latestScore: scores.length ? scores[0] : 0
+      };
+    };
 
-**Today's Data:**
-- **Nutrition:**
-  - Total Intake: ${mealSummary.calories.toFixed(0)} kcal, ${mealSummary.protein.toFixed(1)}g Protein, ${mealSummary.carbs.toFixed(1)}g Carbs, ${mealSummary.fat.toFixed(1)}g Fat.
-  - Meals Logged: ${mealLog.length}
-- **Workout:**
-  - Workouts Logged: ${workoutLog.length}
-  - Details: ${workoutLog.map(w => `${w.workoutType}: ${w.items.map(i => i.name).join(', ')}`).join('; ') || 'None'}
-- **Sleep (Last Night):**
-  - Duration: ${latestSleep ? `${(latestSleep.duration / 60).toFixed(1)} hours` : 'Not logged'}
-  - Sleep Score: ${latestSleep ? `${latestSleep.score}/100` : 'Not logged'}
+    // --- compute aggregates ---
+    const mealsT = aggregateMeals(mealLogToday || []);
+    const mealsY = aggregateMeals(yesterdayLogs?.mealLogYesterday || []);
 
-**Your Task:**
-Format your response using simple markdown. Create three sections:
-1.  "### ✅ What Went Well" - Highlight positive achievements. Be specific (e.g., "You hit your protein target which is fantastic for muscle growth," or "Logging all your meals is a huge step toward mindfulness.").
-2.  "### 🤔 What Could Be Better" - Gently point out areas for improvement without being negative (e.g., "Your calorie intake was a bit low, which might make it harder to build muscle. Let's aim for one more snack tomorrow.").
-3.  "### 🚀 A Tip for Tomorrow" - Provide one clear, simple, and actionable piece of advice for the next day based on today's data.
+    const workoutsT = aggregateWorkouts(workoutLogToday || []);
+    const workoutsY = aggregateWorkouts(yesterdayLogs?.workoutLogYesterday || []);
 
-Keep the tone positive and motivational. Do not include any intro text like "Here's your summary".
+    const sleepT = aggregateSleep(sleepLogToday || []);
+    const sleepY = aggregateSleep(yesterdayLogs?.sleepLogYesterday || []);
+
+    // --- deltas (today - yesterday) ---
+    const deltas = {
+      calories: mealsT.calories - mealsY.calories,
+      protein: mealsT.protein - mealsY.protein,
+      carbs: mealsT.carbs - mealsY.carbs,
+      fat: mealsT.fat - mealsY.fat,
+      workoutSessions: workoutsT.sessions - workoutsY.sessions,
+      steps: workoutsT.steps - workoutsY.steps,
+      workoutDurationMin: workoutsT.durationMin - workoutsY.durationMin,
+      sleepMin: (sleepT.avgMin || 0) - (sleepY.avgMin || 0)
+    };
+
+    // --- compact "facts" JSON for AI ---
+    const facts = {
+      profile: {
+        goal: (userProfile as any)?.fitnessGoal ?? userProfile?.goal ?? 'general',
+        weightKg: userProfile?.weight ?? null
+      },
+      goals: {
+        calories: dailyGoals?.calories ?? null,
+        protein: dailyGoals?.protein ?? null,
+        carbs: dailyGoals?.carbs ?? null,
+        fat: dailyGoals?.fat ?? null
+      },
+      today: {
+        meals: mealsT,
+        workouts: workoutsT,
+        sleep: sleepT
+      },
+      yesterday: {
+        meals: mealsY,
+        workouts: workoutsY,
+        sleep: sleepY
+      },
+      deltas
+    };
+
+    // --- improved prompt: structured + explicit comparison ---
+    const prompt = `
+You are an expert fitness & wellness coach. Using the provided JSON facts, produce a concise markdown summary targeted to the user's goal.
+
+FACTS:
+\`\`\`json
+${JSON.stringify(facts, null, 2)}
+\`\`\`
+
+RULES:
+- Output ONLY markdown with the headings:
+  ### ✅ What Went Well
+  ### 🤔 What Could Be Better
+  ### 🚀 Tip for Tomorrow
+  - Be more elaborate on few points and be specific to the data provided to you and cater to that user alone.
+  - Be funny and creative also if possible but don't go off topic.
+  - In "What Could Be Better", include one explicit comparison to yesterday (use the precomputed delta values). If yesterday data is absent, skip that line.
+  - Use the user's primary goal to contextualize suggestions (e.g., emphasize added calories/protein for muscle gain, calorie control for fat loss).
+  - Avoid long intros, filler, or repeating many raw numbers — translate numbers into short guidance (e.g., "~200 kcal under target", "~30 min less sleep").
+- DO NOT repeat the raw JSON or filler sentences.
+- Produce only the final markdown.
+
+Now generate the summary.
 `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-lite",
-      contents: detailedPrompt,
+    const response = await (ai as any).models.generateContent({
+      model: 'gemini-2.5-flash-lite',
+      contents: prompt
     });
+
     return response.text;
-  } catch (error) {
-    console.error("Error getting daily summary from Gemini:", error);
-    throw new Error("Could not get a daily summary at this time.");
+  } catch (err) {
+    console.error('getDailySummary error:', err);
+    throw new Error('Could not generate daily summary.');
   }
 };
+
 
 export const getMealSuggestions = async (
   query: string,

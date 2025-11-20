@@ -93,6 +93,16 @@ export const addLog = async <T extends object>(
     const logCollectionRef = collection(db, 'users', uid, logType);
     const cleaned = cleanForFirestore(data);
 
+    if (cleaned.timestamp instanceof Date) {
+        cleaned.timestamp = cleaned.timestamp.toISOString();
+        } else if (cleaned.timestamp && typeof cleaned.timestamp === 'object' && 'toDate' in cleaned.timestamp) {
+        try {
+        cleaned.timestamp = (cleaned.timestamp as any).toDate().toISOString();
+        } catch (e) {
+        // ignore conversion failure and leave as-is
+        }
+        }
+        
     const docRef = await addDoc(logCollectionRef, cleaned as DocumentData);
 
     return {

@@ -25,6 +25,7 @@ import { toLocalISODate } from './utils/dateHelpers';
 type Tab = 'Nutrition' | 'Workout' | 'Sleep' | 'Water';
 
 const App: React.FC = () => {
+  // ---------- state hooks (always present) ----------
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [mealLog, setMealLog] = useState<MealLogEntry[]>([]);
   const [workoutLog, setWorkoutLog] = useState<WorkoutLogEntry[]>([]);
@@ -50,11 +51,13 @@ const App: React.FC = () => {
   // selected date (local)
   const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
 
+  // ---------- derived hooks ----------
   const dailyGoals = useMemo<DailyGoals | null>(() => {
     if (!userProfile) return null;
     return calculateDailyGoals(userProfile);
   }, [userProfile]);
 
+  // Auth state loader (runs once on mount)
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setIsAuthLoading(false);
@@ -108,61 +111,64 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // handlers for logs/profile (unchanged)
-  const handleUpdateMeal = async (updatedMeal: MealLogEntry) => {
+  // ---------- callbacks (hooks) ----------
+  const handleUpdateMeal = useCallback(async (updatedMeal: MealLogEntry) => {
     if (!authUser) return;
     await dbService.updateLog(authUser.uid, 'meals', updatedMeal.id, updatedMeal);
     setMealLog(prev => prev.map(m => (m.id === updatedMeal.id ? updatedMeal : m)));
-  };
+  }, [authUser]);
 
-  const handleDeleteMeal = async (id: string) => {
+  const handleDeleteMeal = useCallback(async (id: string) => {
     if (!authUser) return;
     if (window.confirm('Are you sure you want to delete this entry?')) {
       await dbService.deleteLog(authUser.uid, 'meals', id);
       setMealLog(prev => prev.filter(m => m.id !== id));
     }
-  };
+  }, [authUser]);
 
-  const handleUpdateWorkout = async (updatedWorkout: WorkoutLogEntry) => {
+  const handleUpdateWorkout = useCallback(async (updatedWorkout: WorkoutLogEntry) => {
     if (!authUser) return;
     await dbService.updateLog(authUser.uid, 'workouts', updatedWorkout.id, updatedWorkout);
     setWorkoutLog(prev => prev.map(w => (w.id === updatedWorkout.id ? updatedWorkout : w)));
-  };
-  const handleDeleteWorkout = async (id: string) => {
+  }, [authUser]);
+
+  const handleDeleteWorkout = useCallback(async (id: string) => {
     if (!authUser) return;
     if (window.confirm('Are you sure you want to delete this entry?')) {
       await dbService.deleteLog(authUser.uid, 'workouts', id);
       setWorkoutLog(prev => prev.filter(w => w.id !== id));
     }
-  };
+  }, [authUser]);
 
-  const handleUpdateSleep = async (updatedSleep: SleepLogEntry) => {
+  const handleUpdateSleep = useCallback(async (updatedSleep: SleepLogEntry) => {
     if (!authUser) return;
     await dbService.updateLog(authUser.uid, 'sleep', updatedSleep.id, updatedSleep);
     setSleepLog(prev => prev.map(s => (s.id === updatedSleep.id ? updatedSleep : s)));
-  };
-  const handleDeleteSleep = async (id: string) => {
+  }, [authUser]);
+
+  const handleDeleteSleep = useCallback(async (id: string) => {
     if (!authUser) return;
     if (window.confirm('Are you sure you want to delete this entry?')) {
       await dbService.deleteLog(authUser.uid, 'sleep', id);
       setSleepLog(prev => prev.filter(s => s.id !== id));
     }
-  };
+  }, [authUser]);
 
-  const handleUpdateWater = async (updatedWater: WaterLogEntry) => {
+  const handleUpdateWater = useCallback(async (updatedWater: WaterLogEntry) => {
     if (!authUser) return;
     await dbService.updateLog(authUser.uid, 'water', updatedWater.id, updatedWater);
     setWaterLog(prev => prev.map(w => (w.id === updatedWater.id ? updatedWater : w)));
-  };
-  const handleDeleteWater = async (id: string) => {
+  }, [authUser]);
+
+  const handleDeleteWater = useCallback(async (id: string) => {
     if (!authUser) return;
     if (window.confirm('Are you sure you want to delete this entry?')) {
       await dbService.deleteLog(authUser.uid, 'water', id);
       setWaterLog(prev => prev.filter(w => w.id !== id));
     }
-  };
+  }, [authUser]);
 
-  const handleSaveProfile = async (profile: UserProfile) => {
+  const handleSaveProfile = useCallback(async (profile: UserProfile) => {
     if (!authUser) return;
     try {
       const profileToSave = { ...profile, id: authUser.uid };
@@ -174,46 +180,65 @@ const App: React.FC = () => {
       console.error('Failed to save profile', e);
       setError('Could not save your profile. Please try again.');
     }
-  };
+  }, [authUser]);
 
   const handleLogMeal = useCallback(async (text: string) => {
     if (!authUser) return;
     setIsLoggingMeal(true);
     setError(null);
     try {
-      const parsedData = await parseMealFromText(text);
-      const newEntryData = {
-        ...parsedData,
-        timestamp: new Date().toISOString(),
-      };
-      const newEntry = await dbService.addLog(authUser.uid, 'meals', newEntryData);
-      setMealLog(prev => [newEntry, ...prev]);
+    const parsedData = await parseMealFromText(text);
+    
+    
+    // build timestamp using selectedDate's date + current time
+    const now = new Date();
+    const base = new Date(selectedDate);
+    base.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+    
+    
+    const newEntryData = {
+    ...parsedData,
+    timestamp: base.toISOString(),
+    };
+    
+    
+    const newEntry = await dbService.addLog(authUser.uid, 'meals', newEntryData);
+    setMealLog(prev => [newEntry, ...prev]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+    setError(err instanceof Error ? err.message : 'An unknown error occurred.');
     } finally {
-      setIsLoggingMeal(false);
+    setIsLoggingMeal(false);
     }
-  }, [authUser]);
+    }, [authUser, selectedDate]);
 
-  const handleLogWorkout = useCallback(async (text: string, steps: number) => {
-    if (!authUser) return;
-    setIsLoggingWorkout(true);
-    setError(null);
-    try {
+    const handleLogWorkout = useCallback(async (text: string, steps: number) => {
+      if (!authUser) return;
+      setIsLoggingWorkout(true);
+      setError(null);
+      try {
       const parsedData = await parseWorkoutFromText(text);
+      
+      
+      const now = new Date();
+      const base = new Date(selectedDate);
+      base.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+      
+      
       const newEntryData = {
-        ...parsedData,
-        steps: steps > 0 ? steps : null,
-        timestamp: new Date().toISOString(),
+      ...parsedData,
+      steps: steps > 0 ? steps : null,
+      timestamp: base.toISOString(),
       };
+      
+      
       const newEntry = await dbService.addLog(authUser.uid, 'workouts', newEntryData);
       setWorkoutLog(prev => [newEntry, ...prev]);
-    } catch (err) {
+      } catch (err) {
       setError(err instanceof Error ? err.message : 'An unknown error occurred.');
-    } finally {
+      } finally {
       setIsLoggingWorkout(false);
-    }
-  }, [authUser]);
+      }
+      }, [authUser, selectedDate]);
 
   const handleLogSleep = useCallback(async (sleepTime: string, wakeupTime: string) => {
     if (!userProfile || !authUser) return;
@@ -243,21 +268,28 @@ const App: React.FC = () => {
 
   const handleLogWater = useCallback(async (amount: number) => {
     if (amount <= 0 || !authUser) return;
+    
+    
+    const now = new Date();
+    const base = new Date(selectedDate);
+    base.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+    
+    
     const newEntryData = {
-      amount,
-      timestamp: new Date().toISOString(),
+    amount,
+    timestamp: base.toISOString(),
     };
     const newEntry = await dbService.addLog(authUser.uid, 'water', newEntryData);
     setWaterLog(prev => [newEntry, ...prev]);
-  }, [authUser]);
+    }, [authUser, selectedDate]);
 
-  const handleSignOut = async () => {
+  const handleSignOut = useCallback(async () => {
     try {
       await signOutUser();
     } catch (e) {
       setError('Could not sign out. Please try again.');
     }
-  };
+  }, []);
 
   const handleChangePassword = useCallback(async (newPassword: string) => {
     const authInstance = getAuth();
@@ -283,22 +315,44 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // date handlers (local)
-  const goPrevDay = () => setSelectedDate(d => {
-    const n = new Date(d);
-    n.setDate(n.getDate() - 1);
-    return n;
-  });
-  const goNextDay = () => setSelectedDate(d => {
-    const n = new Date(d);
-    n.setDate(n.getDate() + 1);
-    return n;
-  });
-  const onPickDate = (iso: string) => {
-    setSelectedDate(new Date(iso + 'T00:00:00'));
-  };
+  // ---------- date helpers & filtered logs (MUST run every render; keep above any early returns) ----------
+  // local iso for selectedDate
+  const selectedIso = useMemo(() => toLocalISODate(selectedDate), [selectedDate]);
 
-  // rendering gate
+  const filterByDate = useCallback((iso: string) => {
+    return (timestamp?: string) => {
+      if (!timestamp) return false;
+      try {
+        return toLocalISODate(timestamp) === iso;
+      } catch {
+        return false;
+      }
+    };
+  }, []);
+
+  // today's visible logs
+  const visibleMeals = useMemo(() => mealLog.filter(m => filterByDate(selectedIso)(m.timestamp)), [mealLog, filterByDate, selectedIso]);
+  const visibleWorkouts = useMemo(() => workoutLog.filter(w => filterByDate(selectedIso)(w.timestamp)), [workoutLog, filterByDate, selectedIso]);
+  const visibleSleep = useMemo(() => sleepLog.filter(s => filterByDate(selectedIso)(s.timestamp)), [sleepLog, filterByDate, selectedIso]);
+  const visibleWater = useMemo(() => waterLog.filter(w => filterByDate(selectedIso)(w.timestamp)), [waterLog, filterByDate, selectedIso]);
+
+  // yesterday's date/is o and its visible logs
+  const yesterdayDate = useMemo(() => {
+    const d = new Date(selectedDate);
+    d.setDate(d.getDate() - 1);
+    return d;
+  }, [selectedDate]);
+
+  const yesterdayIso = useMemo(() => toLocalISODate(yesterdayDate), [yesterdayDate]);
+
+  const visibleMealsYesterday = useMemo(() => mealLog.filter(m => filterByDate(yesterdayIso)(m.timestamp)), [mealLog, filterByDate, yesterdayIso]);
+  const visibleWorkoutsYesterday = useMemo(() => workoutLog.filter(w => filterByDate(yesterdayIso)(w.timestamp)), [workoutLog, filterByDate, yesterdayIso]);
+  const visibleSleepYesterday = useMemo(() => sleepLog.filter(s => filterByDate(yesterdayIso)(s.timestamp)), [sleepLog, filterByDate, yesterdayIso]);
+  const visibleWaterYesterday = useMemo(() => waterLog.filter(w => filterByDate(yesterdayIso)(w.timestamp)), [waterLog, filterByDate, yesterdayIso]);
+
+  const latestSleep = visibleSleep.length > 0 ? [visibleSleep[0]] : [];
+
+  // ---------- rendering gate (safe now — hooks already declared) ----------
   if (isAuthLoading) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center">
@@ -327,6 +381,7 @@ const App: React.FC = () => {
     return <ProfileSetup onSave={handleSaveProfile} />;
   }
 
+  // ---------- helper UI components ----------
   const TabButton: React.FC<{ tabName: Tab }> = ({ tabName }) => {
     const isActive = activeTab === tabName;
     return (
@@ -340,29 +395,43 @@ const App: React.FC = () => {
     );
   };
 
-  // local iso for selectedDate
-  const selectedIso = toLocalISODate(selectedDate);
-
-  const filterByDate = (timestamp?: string) => {
-    if (!timestamp) return false;
-    try {
-      return toLocalISODate(timestamp) === selectedIso;
-    } catch {
-      return false;
-    }
+  // ---------- date navigation helpers ----------
+  const goPrevDay = () => setSelectedDate(d => {
+    const n = new Date(d);
+    n.setDate(n.getDate() - 1);
+    return n;
+  });
+  const goNextDay = () => setSelectedDate(d => {
+    const n = new Date(d);
+    n.setDate(n.getDate() + 1);
+    return n;
+  });
+  const onPickDate = (iso: string) => {
+    setSelectedDate(new Date(iso + 'T00:00:00'));
   };
 
-  const visibleMeals = mealLog.filter(m => filterByDate(m.timestamp));
-  const visibleWorkouts = workoutLog.filter(w => filterByDate(w.timestamp));
-  const visibleSleep = sleepLog.filter(s => filterByDate(s.timestamp));
-  const visibleWater = waterLog.filter(w => filterByDate(w.timestamp));
-
-  const latestSleep = visibleSleep.length > 0 ? [visibleSleep[0]] : [];
-
+  // ---------- main render ----------
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
       {isProfileModalOpen && <ProfileSetup onSave={handleSaveProfile} initialProfile={userProfile} onClose={() => setProfileModalOpen(false)} />}
-      {isSummaryModalOpen && <SummaryModal onClose={() => setSummaryModalOpen(false)} userProfile={userProfile!} dailyGoals={dailyGoals!} mealLog={visibleMeals} workoutLog={visibleWorkouts} sleepLog={latestSleep} />}
+
+      {isSummaryModalOpen && (
+        <SummaryModal
+          onClose={() => setSummaryModalOpen(false)}
+          userProfile={userProfile!}
+          dailyGoals={dailyGoals!}
+          // today
+          mealLogToday={visibleMeals}
+          workoutLogToday={visibleWorkouts}
+          sleepLogToday={latestSleep}
+          // yesterday
+          mealLogYesterday={visibleMealsYesterday}
+          workoutLogYesterday={visibleWorkoutsYesterday}
+          sleepLogYesterday={visibleSleepYesterday}
+          // don't currently pass water explicitly; add if you want water comparison
+        />
+      )}
+
       {isSuggestionModalOpen && <SuggestionModal onClose={() => setSuggestionModalOpen(false)} userProfile={userProfile!} dailyGoals={dailyGoals!} />}
 
       <Header name={userProfile?.name ?? userProfile?.username ?? 'User'} onEditProfile={() => setProfileModalOpen(true)} onSignOut={handleSignOut} />
@@ -373,7 +442,7 @@ const App: React.FC = () => {
             <strong className="font-bold">Error: </strong>
             <span className="block sm:inline">{error}</span>
             <button className="absolute top-0 bottom-0 right-0 px-4 py-3" onClick={() => setError(null)}>
-              <svg className="fill-current h-6 w-6 text-red-500" role="button" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><title>Close</title><path d="M14.348 14.849a1.2 1.2 0 0 1-1.697 0L10 11.819l-2.651 3.029a1.2 1.2 0 1 1-1.697-1.697l2.758-3.15-2.759-3.152a1.2 1.2 0 1 1 1.697-1.697L10 8.183l2.651-3.031a1.2 1.2 0 1 1 1.697 1.697l-2.758 3.152 2.758 3.15a1.2 1.2 0 0 1 0 1.698z"/></svg>
+              <svg className="fill-current h-6 w-6 text-red-500" role="button" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><title>Close</title><path d="M14.348 14.849a1.2 1.2 0 0 1-1.697 0L10 11.819l-2.651 3.029a1.2 1.2 0 1 1-1.697-1.697l2.758-3.15-2.759-3.152a1.2 1.2 0 1 1 1.697-1.697L10 8.183l2.651-3.031a1.2 1.2 0 1 1 1.697 1.697l-2.758 3.152 2.758 3.15a1.1 1.1 0 0 1 0 1.698z"/></svg>
             </button>
           </div>
         )}
