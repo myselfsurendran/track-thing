@@ -65,11 +65,16 @@ export const calculateMetrics = (input: ProfileInput): UserProfile => {
     // 4. Calculate Body Fat Percentage
     const bfp = calculateBodyFatPercentage(input);
 
+    // 5. Calculate Skeletal Muscle Mass (SMM)
+    const lbm = weight * (1 - bfp / 100);
+    const smm = Math.max(0, parseFloat((gender === 'Male' ? lbm * 0.57 : lbm * 0.47).toFixed(1)));
+
     return {
         ...input,
         bmi,
         tdee,
         bfp,
+        smm,
     };
 };
 

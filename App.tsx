@@ -5,8 +5,9 @@ import ConversationalInput from './components/ConversationalInput';
 import MealLogTable from './components/MealLogTable';
 import ProfileSetup from './components/ProfileSetup';
 import { MealLogEntry, UserProfile, DailyGoals, WorkoutLogEntry, SleepLogEntry, WaterLogEntry } from './types';
-import { parseMealFromText, parseWorkoutFromText } from './services/geminiService';
+import { parseMealFromText, parseWorkoutFromText, setApiKey } from './services/geminiService';
 import { calculateDailyGoals, calculateSleepScore } from './utils/calculations';
+import { encryptText, decryptText } from './utils/encryption';
 import ConversationalWorkoutInput from './components/ConversationalWorkoutInput';
 import WorkoutLogTable from './components/WorkoutLogTable';
 import SleepTracker from './components/SleepTracker';
@@ -54,7 +55,7 @@ const App: React.FC = () => {
   // ---------- derived hooks ----------
   const dailyGoals = useMemo<DailyGoals | null>(() => {
     if (!userProfile) return null;
-    return calculateDailyGoals(userProfile);
+    return userProfile.customGoals || calculateDailyGoals(userProfile);
   }, [userProfile]);
 
   // Auth state loader (runs once on mount)
@@ -82,7 +83,26 @@ const App: React.FC = () => {
 
       try {
         const profile = await dbService.getProfile(user.uid);
-        setUserProfile(profile ?? null);
+        let decryptedProfile = profile;
+        if (profile) {
+          let decryptedKey = '';
+          if (profile.geminiApiKey) {
+            try {
+              decryptedKey = await decryptText(profile.geminiApiKey, user.uid);
+            } catch (err) {
+              console.error('Failed to decrypt API key:', err);
+            }
+          }
+          if (decryptedKey) {
+            localStorage.setItem('gemini_api_key', decryptedKey);
+            setApiKey(decryptedKey);
+          } else {
+            localStorage.removeItem('gemini_api_key');
+            setApiKey('');
+          }
+          decryptedProfile = { ...profile, geminiApiKey: decryptedKey };
+        }
+        setUserProfile(decryptedProfile ?? null);
         setUserHasProfile(!!profile);
 
         if (profile) {
@@ -171,9 +191,29 @@ const App: React.FC = () => {
   const handleSaveProfile = useCallback(async (profile: UserProfile) => {
     if (!authUser) return;
     try {
-      const profileToSave = { ...profile, id: authUser.uid };
+      const plainApiKey = profile.geminiApiKey || '';
+      let encryptedKey = '';
+      if (plainApiKey) {
+        encryptedKey = await encryptText(plainApiKey, authUser.uid);
+      }
+      
+      const profileToSave = { 
+        ...profile, 
+        id: authUser.uid,
+        geminiApiKey: encryptedKey
+      };
+      
       await dbService.saveProfile(authUser.uid, profileToSave);
-      setUserProfile(profileToSave);
+      
+      if (plainApiKey) {
+        localStorage.setItem('gemini_api_key', plainApiKey);
+        setApiKey(plainApiKey);
+      } else {
+        localStorage.removeItem('gemini_api_key');
+        setApiKey('');
+      }
+
+      setUserProfile({ ...profileToSave, geminiApiKey: plainApiKey });
       setUserHasProfile(true);
       setProfileModalOpen(false);
     } catch (e) {
@@ -197,10 +237,10 @@ const App: React.FC = () => {
     
     
     const newEntryData = {
-    ...parsedData,
-    timestamp: base.toISOString(),
+      ...parsedData,
+      timestamp: base.toISOString(),
+      rawInput: text,
     };
-    
     
     const newEntry = await dbService.addLog(authUser.uid, 'meals', newEntryData);
     setMealLog(prev => [newEntry, ...prev]);
@@ -285,6 +325,8 @@ const App: React.FC = () => {
 
   const handleSignOut = useCallback(async () => {
     try {
+      localStorage.removeItem('gemini_api_key');
+      setApiKey('');
       await signOutUser();
     } catch (e) {
       setError('Could not sign out. Please try again.');
@@ -443,6 +485,21 @@ const App: React.FC = () => {
             <span className="block sm:inline">{error}</span>
             <button className="absolute top-0 bottom-0 right-0 px-4 py-3" onClick={() => setError(null)}>
               <svg className="fill-current h-6 w-6 text-red-500" role="button" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><title>Close</title><path d="M14.348 14.849a1.2 1.2 0 0 1-1.697 0L10 11.819l-2.651 3.029a1.2 1.2 0 1 1-1.697-1.697l2.758-3.15-2.759-3.152a1.2 1.2 0 1 1 1.697-1.697L10 8.183l2.651-3.031a1.2 1.2 0 1 1 1.697 1.697l-2.758 3.152 2.758 3.15a1.1 1.1 0 0 1 0 1.698z"/></svg>
+            </button>
+          </div>
+        )}
+
+        {userProfile && !userProfile.geminiApiKey && (
+          <div className="bg-amber-50 border border-amber-300 text-amber-800 px-4 py-3 rounded-lg relative mb-6 flex justify-between items-center" role="alert">
+            <div>
+              <strong className="font-bold">⚠️ Gemini API Key Required: </strong>
+              <span className="block sm:inline text-sm md:text-base">Please edit your profile to add your Gemini API Key so the AI features can work.</span>
+            </div>
+            <button 
+              onClick={() => setProfileModalOpen(true)}
+              className="bg-amber-600 hover:bg-amber-700 text-white font-semibold py-1.5 px-3 rounded-md text-xs transition duration-200 shrink-0 ml-4"
+            >
+              Add Key
             </button>
           </div>
         )}

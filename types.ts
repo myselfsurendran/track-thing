@@ -1,6 +1,7 @@
 export interface MealItem {
   name: string;
   quantity: number;
+  unit?: string;
   calories: number;
   protein: number;
   carbs: number;
@@ -12,6 +13,7 @@ export interface MealLogEntry {
   mealType: 'Breakfast' | 'Lunch' | 'Dinner' | 'Snack' | 'Unknown';
   items: MealItem[];
   timestamp: string;
+  rawInput?: string;
 }
 
 export interface NutrientSummary {
@@ -43,10 +45,14 @@ export interface UserProfile {
     activityLevel: ActivityLevel;
     fitnessGoal: FitnessGoal;
     sleepGoal: SleepGoal;
+    username?: string;
+    geminiApiKey?: string;
     // Calculated values
     bmi: number;
     tdee: number;
     bfp: number; // body fat percentage
+    smm?: number; // skeletal muscle mass in kg
+    customGoals?: DailyGoals;
 }
 
 export interface DailyGoals {

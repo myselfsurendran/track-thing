@@ -23,7 +23,10 @@ const EditProfileModal: React.FC<{
   onChangePassword?: (newPassword: string) => Promise<void>;
 }> = ({ open, initialProfile, onClose, onSave, onChangePassword }) => {
   const [username, setUsername] = useState(initialProfile.username ?? '');
+  const [geminiApiKey, setGeminiApiKey] = useState(initialProfile.geminiApiKey ?? '');
   const [newPassword, setNewPassword] = useState('');
+  const [bfp, setBfp] = useState(initialProfile.bfp != null ? String(initialProfile.bfp) : '');
+  const [smm, setSmm] = useState(initialProfile.smm != null ? String(initialProfile.smm) : '');
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
 
@@ -33,7 +36,26 @@ const EditProfileModal: React.FC<{
     setMsg(null);
     setLoading(true);
     try {
-      const updated: UserProfile = { ...initialProfile, username: username.trim() };
+      const updated: UserProfile = { 
+        ...initialProfile, 
+        username: username.trim(),
+        geminiApiKey: geminiApiKey.trim()
+      };
+      
+      if (bfp.trim() !== '') {
+        updated.bfp = parseFloat(bfp);
+      } else {
+        updated.bfp = initialProfile.bfp;
+      }
+      
+      if (smm.trim() !== '') {
+        updated.smm = parseFloat(smm);
+      } else {
+        const finalBfp = updated.bfp ?? 0;
+        const lbm = updated.weight * (1 - finalBfp / 100);
+        updated.smm = updated.gender === 'Male' ? lbm * 0.57 : lbm * 0.47;
+      }
+      
       await onSave(updated);
       if (newPassword) {
         if (!onChangePassword) throw new Error('Password change not available.');
@@ -58,6 +80,15 @@ const EditProfileModal: React.FC<{
 
         <label className="block text-sm text-slate-600 mb-1">Username</label>
         <input value={username} onChange={(e) => setUsername(e.target.value)} className="w-full mb-3 p-2 border rounded-md bg-slate-50" placeholder="username" />
+
+        <label className="block text-sm text-slate-600 mb-1">Body Fat %</label>
+        <input type="number" step="0.1" value={bfp} onChange={(e) => setBfp(e.target.value)} className="w-full mb-3 p-2 border rounded-md bg-slate-50" placeholder="e.g. 15.5" />
+
+        <label className="block text-sm text-slate-600 mb-1">Muscle Mass (SMM) kg</label>
+        <input type="number" step="0.1" value={smm} onChange={(e) => setSmm(e.target.value)} className="w-full mb-3 p-2 border rounded-md bg-slate-50" placeholder="e.g. 32.4" />
+
+        <label className="block text-sm text-slate-600 mb-1">Gemini API Key</label>
+        <input type="password" value={geminiApiKey} onChange={(e) => setGeminiApiKey(e.target.value)} className="w-full mb-3 p-2 border rounded-md bg-slate-50" placeholder="AIzaSy..." />
 
         <label className="block text-sm text-slate-600 mb-1">New password (leave blank to keep)</label>
         <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="w-full mb-3 p-2 border rounded-md bg-slate-50" placeholder="At least 6 characters" />
@@ -99,6 +130,11 @@ const ProfileDetails: React.FC<ProfileDetailsProps> = ({ profile, onSaveProfile,
           <DetailItem label="Weight" value={profile.weight ? `${profile.weight} kg` : '—'} />
           <DetailItem label="Height" value={profile.height ? `${profile.height} cm` : '—'} />
           <DetailItem label="BMI" value={typeof profile.bmi === 'number' ? profile.bmi.toFixed(1) : '—'} />
+          <DetailItem label="Body Fat %" value={typeof profile.bfp === 'number' ? `${profile.bfp.toFixed(1)}%` : '—'} />
+          <DetailItem label="Muscle Mass (SMM)" value={
+            typeof profile.smm === 'number' ? `${profile.smm.toFixed(1)} kg` :
+            typeof profile.bfp === 'number' && profile.weight ? `${(profile.weight * (1 - profile.bfp / 100) * (profile.gender === 'Male' ? 0.57 : 0.47)).toFixed(1)} kg` : '—'
+          } />
         </div>
       </div>
 

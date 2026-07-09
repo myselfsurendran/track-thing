@@ -27,6 +27,9 @@ const ProfileSetup: React.FC<ProfileSetupProps> = ({ onSave, initialProfile = nu
     fitnessGoal: 'Maintain Weight' as FitnessGoal,
     bedtime: '23:00',
     wakeupTime: '07:00',
+    geminiApiKey: '',
+    bfp: '',
+    smm: '',
   });
   const [error, setError] = useState('');
 
@@ -48,6 +51,9 @@ const ProfileSetup: React.FC<ProfileSetupProps> = ({ onSave, initialProfile = nu
         fitnessGoal: initialProfile.fitnessGoal ?? 'Maintain Weight',
         bedtime: initialProfile.sleepGoal?.bedtime ?? '23:00',
         wakeupTime: initialProfile.sleepGoal?.wakeupTime ?? '07:00',
+        geminiApiKey: initialProfile.geminiApiKey ?? '',
+        bfp: initialProfile.bfp != null ? String(initialProfile.bfp) : '',
+        smm: initialProfile.smm != null ? String(initialProfile.smm) : '',
       });
     }
   }, [initialProfile, isEditMode]);
@@ -72,6 +78,9 @@ const ProfileSetup: React.FC<ProfileSetupProps> = ({ onSave, initialProfile = nu
       hip,
       bedtime,
       wakeupTime,
+      geminiApiKey,
+      bfp,
+      smm,
     } = formData;
 
     // required checks
@@ -124,10 +133,18 @@ const ProfileSetup: React.FC<ProfileSetupProps> = ({ onSave, initialProfile = nu
       waist: parsed.waist,
       hip: parsed.hip ?? initialProfile?.hip ?? null,
       sleepGoal: { bedtime, wakeupTime },
+      geminiApiKey: geminiApiKey.trim(),
     };
 
     // calculate derived metrics (expects certain shape)
     const finalProfile = calculateMetrics(mergedProfile as UserProfile);
+
+    if (bfp.trim() !== '') {
+      finalProfile.bfp = parseFloat(bfp);
+    }
+    if (smm.trim() !== '') {
+      finalProfile.smm = parseFloat(smm);
+    }
 
     onSave(finalProfile);
   };
@@ -197,6 +214,18 @@ const ProfileSetup: React.FC<ProfileSetupProps> = ({ onSave, initialProfile = nu
               <input type="number" step="0.1" name="hip" id="hip" value={formData.hip} onChange={handleChange} className={formInputClass} placeholder="95" />
             </div>
           )}
+          <div>
+            <label htmlFor="bfp" className={formLabelClass}>
+              Body Fat % (Optional)
+            </label>
+            <input type="number" step="0.1" name="bfp" id="bfp" value={formData.bfp} onChange={handleChange} className={formInputClass} placeholder="Calculated if empty" />
+          </div>
+          <div>
+            <label htmlFor="smm" className={formLabelClass}>
+              Muscle Mass (SMM) kg (Optional)
+            </label>
+            <input type="number" step="0.1" name="smm" id="smm" value={formData.smm} onChange={handleChange} className={formInputClass} placeholder="Calculated if empty" />
+          </div>
 
           <div className="md:col-span-2 border-t border-slate-200 pt-6">
             <h3 className="text-lg font-medium text-indigo-600">Goals</h3>
@@ -237,6 +266,27 @@ const ProfileSetup: React.FC<ProfileSetupProps> = ({ onSave, initialProfile = nu
               Target Wake-up Time
             </label>
             <input type="time" name="wakeupTime" id="wakeupTime" value={formData.wakeupTime} onChange={handleChange} className={formInputClass} />
+          </div>
+
+          <div className="md:col-span-2 border-t border-slate-200 pt-6">
+            <h3 className="text-lg font-medium text-indigo-600">AI Configuration</h3>
+          </div>
+          <div className="md:col-span-2">
+            <label htmlFor="geminiApiKey" className={formLabelClass}>
+              Gemini API Key
+            </label>
+            <input
+              type="password"
+              name="geminiApiKey"
+              id="geminiApiKey"
+              value={formData.geminiApiKey}
+              onChange={handleChange}
+              className={formInputClass}
+              placeholder="AIzaSy..."
+            />
+            <p className="text-xs text-slate-500 mt-1">
+              Your API key is encrypted client-side and saved securely in your private user database. It is never exposed in plaintext.
+            </p>
           </div>
         </div>
         <div className="pt-4">

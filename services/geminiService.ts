@@ -2,11 +2,72 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { UserProfile, MealLogEntry, WorkoutLogEntry, SleepLogEntry, DailyGoals } from '../types';
 
-if (!process.env.API_KEY) {
-    throw new Error("API_KEY environment variable not set");
-}
+let ai: GoogleGenAI | null = null;
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+export const setApiKey = (key: string) => {
+  if (key) {
+    ai = new GoogleGenAI({ apiKey: key });
+  } else {
+    ai = null;
+  }
+};
+
+const getAi = (): GoogleGenAI => {
+  if (!ai) {
+    const envKey = (process.env.API_KEY || process.env.GEMINI_API_KEY);
+    const localKey = localStorage.getItem('gemini_api_key');
+    const key = envKey || localKey;
+    if (key) {
+      ai = new GoogleGenAI({ apiKey: key });
+    }
+  }
+  if (!ai) {
+    throw new Error("Gemini API Key is not set. Please set it in your Profile/Settings.");
+  }
+  return ai;
+};
+
+const generateWithFallback = async (params: any, retries = 2): Promise<any> => {
+  const models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-1.5-flash"];
+  let lastError: any = null;
+  
+  for (const model of models) {
+    let attempt = 0;
+    while (attempt <= retries) {
+      try {
+        const aiInstance = getAi();
+        const response = await aiInstance.models.generateContent({
+          ...params,
+          model,
+        });
+        return response;
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`Model ${model} failed (attempt ${attempt + 1}/${retries + 1}):`, err);
+        
+        const errMsg = String(err).toLowerCase();
+        const isTransient = 
+          errMsg.includes('503') || 
+          errMsg.includes('unavailable') || 
+          errMsg.includes('high demand') ||
+          errMsg.includes('429') ||
+          errMsg.includes('exhausted') ||
+          err?.status === 'UNAVAILABLE' ||
+          err?.code === 503 ||
+          err?.code === 429;
+          
+        if (!isTransient) {
+          throw err;
+        }
+        attempt++;
+        if (attempt <= retries) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+        }
+      }
+    }
+  }
+  throw lastError || new Error("Failed to generate content after trying multiple models.");
+};
 
 const mealLogSchema = {
   type: Type.OBJECT,
@@ -28,7 +89,11 @@ const mealLogSchema = {
           },
           quantity: {
             type: Type.NUMBER,
-            description: "The quantity of the food item.",
+            description: "The numeric quantity amount (e.g. 100 for '100g', 2 for '2 slices').",
+          },
+          unit: {
+            type: Type.STRING,
+            description: "The unit of measurement (e.g. 'g', 'ml', 'pcs', 'slice', 'bowl'). Use standard shorthands or empty string if no unit exists.",
           },
           calories: {
             type: Type.NUMBER,
@@ -47,7 +112,7 @@ const mealLogSchema = {
             description: "Estimated fat in grams.",
           },
         },
-        required: ["name", "quantity", "calories", "protein", "carbs", "fat"],
+        required: ["name", "quantity", "unit", "calories", "protein", "carbs", "fat"],
       },
     },
   },
@@ -85,8 +150,7 @@ const workoutLogSchema = {
 
 export const parseMealFromText = async (text: string): Promise<Omit<MealLogEntry, 'timestamp' | 'id'>> => {
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-lite",
+    const response = await generateWithFallback({
       contents: `Parse the following meal description: "${text}"`,
       config: {
         systemInstruction: `You are an expert nutrition tracker. Your task is to analyze a user's meal description and extract the food items, quantities, and meal type. You must also estimate the nutritional information (calories, protein, carbs, fat) for each item. Respond ONLY with a JSON object in the specified format. Do not add any introductory text, explanations, or markdown formatting. If the meal type is not specified, default to 'Unknown'.`,
@@ -112,8 +176,7 @@ export const parseMealFromText = async (text: string): Promise<Omit<MealLogEntry
 
 export const parseWorkoutFromText = async (text: string): Promise<Omit<WorkoutLogEntry, 'timestamp' | 'id'>> => {
     try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash-lite",
+        const response = await generateWithFallback({
             contents: `Parse the following workout description: "${text}"`,
             config: {
                 systemInstruction: `You are an expert fitness coach. Your task is to analyze a user's workout description and extract the exercises, sets, reps, weight, duration, distance, and overall workout type. Respond ONLY with a JSON object in the specified format. If a specific metric (like reps, weight, etc.) is not mentioned for an exercise, omit the key. If the workout type is a mix, use 'Mixed'. If it's unclear, use 'Other'.`,
@@ -150,6 +213,7 @@ export const getDailySummary = async (
     mealLogYesterday?: MealLogEntry[],
     workoutLogYesterday?: WorkoutLogEntry[],
     sleepLogYesterday?: SleepLogEntry[],
+    waterLogYesterday?: any[],
   }
 ): Promise<string> => {
   try {
@@ -219,7 +283,7 @@ export const getDailySummary = async (
     // --- compact "facts" JSON for AI ---
     const facts = {
       profile: {
-        goal: (userProfile as any)?.fitnessGoal ?? userProfile?.goal ?? 'general',
+        goal: userProfile?.fitnessGoal ?? 'general',
         weightKg: userProfile?.weight ?? null
       },
       goals: {
@@ -266,8 +330,7 @@ RULES:
 Now generate the summary.
 `;
 
-    const response = await (ai as any).models.generateContent({
-      model: 'gemini-2.5-flash-lite',
+    const response = await generateWithFallback({
       contents: prompt
     });
 
@@ -307,8 +370,7 @@ A user is asking for a meal suggestion. Provide a helpful, actionable, and perso
 Respond with only the suggestion text. Do not include any intro text like "Here are some suggestions".
 `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-lite",
+    const response = await generateWithFallback({
       contents: detailedPrompt,
     });
 
@@ -373,8 +435,7 @@ A user is asking for a workout suggestion. Provide a structured, helpful, and pe
 5.  Respond ONLY with a JSON object in the specified format. Do not add any introductory text, explanations, or markdown formatting.
 `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-lite",
+    const response = await generateWithFallback({
       contents: detailedPrompt,
       config: {
           responseMimeType: "application/json",
@@ -388,5 +449,67 @@ A user is asking for a workout suggestion. Provide a structured, helpful, and pe
   } catch (error) {
     console.error("Error getting workout suggestions from Gemini:", error);
     throw new Error("Could not get workout suggestions at this time. Please try again.");
+  }
+};
+
+const goalSuggestionSchema = {
+  type: Type.OBJECT,
+  properties: {
+    calories: { type: Type.NUMBER, description: "Daily calorie target in kcal." },
+    protein: { type: Type.NUMBER, description: "Daily protein target in grams." },
+    carbs: { type: Type.NUMBER, description: "Daily carbs target in grams." },
+    fat: { type: Type.NUMBER, description: "Daily fat target in grams." },
+    water: { type: Type.NUMBER, description: "Daily water target in ml." },
+    explanation: { type: Type.STRING, description: "A concise 1-2 sentence explanation of why these goals are recommended based on the profile." }
+  },
+  required: ["calories", "protein", "carbs", "fat", "water", "explanation"]
+};
+
+export const getGoalSuggestions = async (
+  userProfile: UserProfile
+): Promise<{ goals: DailyGoals, explanation: string }> => {
+  try {
+    const detailedPrompt = `
+You are an expert AI sports dietitian and fitness coach.
+A user wants personalized daily nutritional goals based on their physical profile.
+
+**User Profile:**
+- Age: ${userProfile.age}
+- Gender: ${userProfile.gender}
+- Height: ${userProfile.height} cm
+- Weight: ${userProfile.weight} kg
+- Activity Level: ${userProfile.activityLevel}
+- Fitness Goal: ${userProfile.fitnessGoal}
+- Body Fat Percentage: ${userProfile.bfp}%
+- Skeletal Muscle Mass: ${userProfile.smm ? userProfile.smm + ' kg' : 'Unknown'}
+
+**Your Task:**
+1. Calculate a highly precise calorie goal and macronutrient distribution (protein, carbs, fat) and daily water intake (ml) catered specifically to their fitness goal and body composition.
+2. Provide a short, encouraging 1-2 sentence explanation for these numbers.
+3. Respond ONLY with a JSON object in the specified format. Do not add any introductory text, explanations, or markdown formatting outside the JSON structure.
+`;
+
+    const response = await generateWithFallback({
+      contents: detailedPrompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: goalSuggestionSchema,
+      }
+    });
+
+    const parsedData = JSON.parse(response.text.trim());
+    return {
+      goals: {
+        calories: Math.round(parsedData.calories),
+        protein: Math.round(parsedData.protein),
+        carbs: Math.round(parsedData.carbs),
+        fat: Math.round(parsedData.fat),
+        water: Math.round(parsedData.water),
+      },
+      explanation: parsedData.explanation
+    };
+  } catch (error) {
+    console.error("Error getting goal suggestions from Gemini:", error);
+    throw new Error("Could not get goal suggestions. Please check your API key and try again.");
   }
 };
