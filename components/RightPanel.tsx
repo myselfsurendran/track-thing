@@ -1,6 +1,6 @@
 // src/components/RightPanel.tsx
 import React, { useMemo, useState } from 'react';
-import { MealLogEntry, DailyGoals, UserProfile, WorkoutLogEntry, SleepLogEntry, WaterLogEntry } from '../types';
+import { MealLogEntry, DailyGoals, UserProfile, WorkoutLogEntry, SleepLogEntry, WeightLogEntry } from '../types';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import ProfileDetails from './ProfileDetails';
 import { getGoalSuggestions } from '../services/geminiService';
@@ -9,10 +9,10 @@ import MacroHistoryChart from './MacroHistoryChart';
 import SleepScoreHistoryChart from './SleepScoreHistoryChart';
 import StepsHistoryChart from './StepsHistoryChart';
 import WorkoutFrequencyChart from './WorkoutFrequencyChart';
-import WaterHistoryChart from './WaterHistoryChart';
+import WeightHistoryChart from './WeightHistoryChart';
 import { toLocalISODate } from '../utils/dateHelpers';
 
-type Tab = 'Nutrition' | 'Workout' | 'Sleep' | 'Water';
+type Tab = 'Nutrition' | 'Workout' | 'Sleep' | 'Weight';
 
 interface RightPanelProps {
   activeTab: Tab;
@@ -21,7 +21,7 @@ interface RightPanelProps {
   mealLog: MealLogEntry[];
   workoutLog: WorkoutLogEntry[];
   sleepLog: SleepLogEntry[];
-  waterLog: WaterLogEntry[];
+  weightLog: WeightLogEntry[];
   selectedDate?: Date;
   onChangePassword?: (newPassword: string) => Promise<void>;
   onSaveProfile?: (profile: UserProfile) => Promise<void>;
@@ -76,7 +76,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
   mealLog, 
   workoutLog, 
   sleepLog, 
-  waterLog, 
+  weightLog, 
   selectedDate, 
   onSaveProfile 
 }) => {
@@ -149,7 +149,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
   const safeMealLog = Array.isArray(mealLog) ? mealLog : [];
   const safeWorkoutLog = Array.isArray(workoutLog) ? workoutLog : [];
   const safeSleepLog = Array.isArray(sleepLog) ? sleepLog : [];
-  const safeWaterLog = Array.isArray(waterLog) ? waterLog : [];
+  const safeWeightLog = Array.isArray(weightLog) ? weightLog : [];
 
   const refDate = selectedDate ? new Date(selectedDate) : new Date();
   const dateLabel = refDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
@@ -168,7 +168,11 @@ const RightPanel: React.FC<RightPanelProps> = ({
       const dayMeals = safeMealLog.filter(meal => toLocalISODate(meal.timestamp) === dateIso);
       const dayWorkouts = safeWorkoutLog.filter(w => toLocalISODate(w.timestamp) === dateIso);
       const daySleep = safeSleepLog.find(s => toLocalISODate(s.timestamp) === dateIso);
-      const dayWater = safeWaterLog.filter(w => toLocalISODate(w.timestamp) === dateIso);
+
+      const pastWeights = safeWeightLog
+        .filter(w => toLocalISODate(w.timestamp) <= dateIso)
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      const weightAtDate = pastWeights.length > 0 ? pastWeights[0].weight : (userProfile.weight ?? 0);
 
       const mealSummary = { calories: 0, protein: 0, carbs: 0, fat: 0 };
       dayMeals.forEach(meal => {
@@ -182,7 +186,6 @@ const RightPanel: React.FC<RightPanelProps> = ({
       });
 
       const totalSteps = dayWorkouts.reduce((sum, w) => sum + Number(w.steps ?? 0), 0);
-      const totalWater = dayWater.reduce((sum, w) => sum + Number(w?.amount ?? 0), 0);
 
       const workoutsAgg = dayWorkouts.reduce((acc: Record<string, number>, w) => {
         const key = w.workoutType || 'Other';
@@ -198,18 +201,17 @@ const RightPanel: React.FC<RightPanelProps> = ({
         fat: mealSummary.fat,
         sleepScore: daySleep?.score ?? daySleep?.sleepScore ?? 0,
         steps: totalSteps,
-        water: totalWater,
+        weight: weightAtDate,
         ...workoutsAgg,
       };
     });
-  }, [safeMealLog, safeWorkoutLog, safeSleepLog, safeWaterLog, refDate]);
+  }, [safeMealLog, safeWorkoutLog, safeSleepLog, safeWeightLog, userProfile.weight, refDate]);
 
   const todaysSummary = useMemo(() => {
     const dateIso = toLocalISODate(refDate);
     const todaysMeals = safeMealLog.filter(m => toLocalISODate(m.timestamp) === dateIso);
-    const todaysWater = safeWaterLog.filter(w => toLocalISODate(w.timestamp) === dateIso);
 
-    const totals = { calories: 0, protein: 0, carbs: 0, fat: 0, water: 0 };
+    const totals = { calories: 0, protein: 0, carbs: 0, fat: 0 };
     todaysMeals.forEach(m => {
       const items = Array.isArray((m as any).items) ? (m as any).items : [];
       items.forEach((item: any) => {
@@ -220,9 +222,8 @@ const RightPanel: React.FC<RightPanelProps> = ({
       });
     });
 
-    totals.water = todaysWater.reduce((sum, w) => sum + Number(w?.amount ?? 0), 0);
     return totals;
-  }, [safeMealLog, safeWaterLog, refDate]);
+  }, [safeMealLog, refDate]);
 
   const macroData = useMemo(() => {
     const protein = Number(todaysSummary?.protein ?? 0);
@@ -280,15 +281,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
             className="w-full p-2 border rounded-md text-sm bg-slate-50 focus:ring-1 focus:ring-indigo-500"
           />
         </div>
-        <div className="col-span-2">
-          <label className="block text-xs text-slate-500 mb-1">Water Target (ml)</label>
-          <input
-            type="number"
-            value={editedGoals?.water ?? ''}
-            onChange={(e) => setEditedGoals(prev => prev ? { ...prev, water: parseInt(e.target.value) || 0 } : null)}
-            className="w-full p-2 border rounded-md text-sm bg-slate-50 focus:ring-1 focus:ring-indigo-500"
-          />
-        </div>
+
       </div>
       <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100">
         <button
@@ -329,18 +322,6 @@ const RightPanel: React.FC<RightPanelProps> = ({
             </div>
           </div>
           <div className="flex items-center space-x-2 shrink-0">
-            {userProfile.customGoals && onSaveProfile && (
-              <button
-                onClick={async () => {
-                  const updatedProfile = { ...userProfile };
-                  delete updatedProfile.customGoals;
-                  await onSaveProfile(updatedProfile);
-                }}
-                className="text-indigo-600 hover:text-indigo-800 text-[10px] font-medium mr-1"
-              >
-                Reset to Default
-              </button>
-            )}
             {onSaveProfile && (
               <button
                 onClick={handleAskGemini}
@@ -473,17 +454,11 @@ const RightPanel: React.FC<RightPanelProps> = ({
     </>
   );
 
-  const waterContent = (
+  const weightContent = (
     <>
-      <div className="bg-white p-6 rounded-lg shadow-md">
-        <h3 className="text-xl font-semibold mb-4 text-indigo-600">Hydration — {dateLabel}</h3>
-        <div className="grid grid-cols-1">
-          <GoalItem icon="💧" label="Water" current={todaysSummary.water} target={dailyGoals.water} unit="ml" />
-        </div>
-      </div>
       <div className="bg-white rounded-lg p-6 shadow-md">
-        <h3 className="text-xl font-semibold mb-4 text-indigo-600">Water Intake History (7 Days)</h3>
-        <WaterHistoryChart data={historyData.map(d => ({ date: d.date, water: d.water || 0 }))} goal={dailyGoals.water} />
+        <h3 className="text-xl font-semibold mb-4 text-indigo-600">Weight History (7 Days)</h3>
+        <WeightHistoryChart data={historyData.map(d => ({ date: d.date, weight: d.weight }))} />
       </div>
     </>
   );
@@ -494,7 +469,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
       {activeTab === 'Nutrition' && nutritionContent}
       {activeTab === 'Workout' && workoutContent}
       {activeTab === 'Sleep' && sleepContent}
-      {activeTab === 'Water' && waterContent}
+      {activeTab === 'Weight' && weightContent}
     </div>
   );
 };

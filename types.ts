@@ -53,6 +53,8 @@ export interface UserProfile {
     bfp: number; // body fat percentage
     smm?: number; // skeletal muscle mass in kg
     customGoals?: DailyGoals;
+    weightHistory?: WeightLogEntry[];
+    dailySummaries?: Record<string, string>;
 }
 
 export interface DailyGoals {
@@ -60,7 +62,6 @@ export interface DailyGoals {
     protein: number;
     carbs: number;
     fat: number;
-    water: number; // in ml
 }
 
 export interface WorkoutItem {
@@ -89,8 +90,8 @@ export interface SleepLogEntry {
     timestamp: string; // Date of wakeup
 }
 
-export interface WaterLogEntry {
+export interface WeightLogEntry {
     id: string;
-    amount: number; // in ml
-    timestamp: string;
-}
+    weight: number; // in kg
+    timestamp: string; // ISO String
+}

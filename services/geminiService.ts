@@ -213,7 +213,6 @@ export const getDailySummary = async (
     mealLogYesterday?: MealLogEntry[],
     workoutLogYesterday?: WorkoutLogEntry[],
     sleepLogYesterday?: SleepLogEntry[],
-    waterLogYesterday?: any[],
   }
 ): Promise<string> => {
   try {
@@ -459,10 +458,9 @@ const goalSuggestionSchema = {
     protein: { type: Type.NUMBER, description: "Daily protein target in grams." },
     carbs: { type: Type.NUMBER, description: "Daily carbs target in grams." },
     fat: { type: Type.NUMBER, description: "Daily fat target in grams." },
-    water: { type: Type.NUMBER, description: "Daily water target in ml." },
     explanation: { type: Type.STRING, description: "A concise 1-2 sentence explanation of why these goals are recommended based on the profile." }
   },
-  required: ["calories", "protein", "carbs", "fat", "water", "explanation"]
+  required: ["calories", "protein", "carbs", "fat", "explanation"]
 };
 
 export const getGoalSuggestions = async (
@@ -484,7 +482,7 @@ A user wants personalized daily nutritional goals based on their physical profil
 - Skeletal Muscle Mass: ${userProfile.smm ? userProfile.smm + ' kg' : 'Unknown'}
 
 **Your Task:**
-1. Calculate a highly precise calorie goal and macronutrient distribution (protein, carbs, fat) and daily water intake (ml) catered specifically to their fitness goal and body composition.
+1. Calculate a highly precise calorie goal and macronutrient distribution (protein, carbs, fat) catered specifically to their fitness goal and body composition.
 2. Provide a short, encouraging 1-2 sentence explanation for these numbers.
 3. Respond ONLY with a JSON object in the specified format. Do not add any introductory text, explanations, or markdown formatting outside the JSON structure.
 `;
@@ -504,12 +502,74 @@ A user wants personalized daily nutritional goals based on their physical profil
         protein: Math.round(parsedData.protein),
         carbs: Math.round(parsedData.carbs),
         fat: Math.round(parsedData.fat),
-        water: Math.round(parsedData.water),
       },
       explanation: parsedData.explanation
     };
   } catch (error) {
     console.error("Error getting goal suggestions from Gemini:", error);
     throw new Error("Could not get goal suggestions. Please check your API key and try again.");
+  }
+};
+
+export const getChatbotResponse = async (
+  message: string,
+  history: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }>,
+  userProfile: UserProfile,
+  contextData: any
+): Promise<string> => {
+  try {
+    const contextPrompt = `
+You are an expert AI Fitness Coach and wellness chatbot. The user is having a conversation with you.
+
+Here is the user's profile and current progress for context:
+- Name: ${userProfile.name ?? 'User'}
+- Age: ${userProfile.age ?? 'Unknown'} years
+- Gender: ${userProfile.gender ?? 'Unknown'}
+- Weight: ${userProfile.weight ?? 'Unknown'} kg
+- Height: ${userProfile.height ?? 'Unknown'} cm
+- Fitness Goal: ${userProfile.fitnessGoal ?? 'General Health'}
+- Today's Calorie Goal: ${contextData.caloriesGoal ?? 2000} kcal (Consumed: ${contextData.caloriesConsumed ?? 0} kcal)
+- Today's Protein Goal: ${contextData.proteinGoal ?? 120} g (Consumed: ${contextData.proteinConsumed ?? 0} g)
+- Today's Carbs Goal: ${contextData.carbsGoal ?? 200} g (Consumed: ${contextData.carbsConsumed ?? 0} g)
+- Today's Fat Goal: ${contextData.fatGoal ?? 65} g (Consumed: ${contextData.fatConsumed ?? 0} g)
+- Today's Steps: ${contextData.steps ?? 0} steps
+- Yesterday's Intake:
+  * Calories: ${contextData.yesterday?.calories ?? 0} kcal
+  * Protein: ${contextData.yesterday?.protein ?? 0} g
+  * Carbs: ${contextData.yesterday?.carbs ?? 0} g
+  * Fat: ${contextData.yesterday?.fat ?? 0} g
+- Weight History: ${JSON.stringify(contextData.weightHistory ?? [])}
+- Recent Daily Summaries (Cached logs for past dates):
+${Object.entries(contextData.recentSummaries || {}).map(([date, sum]: any) => `--- Date: ${date} ---\n${sum}`).join('\n\n')}
+
+Please keep your responses friendly, encouraging, and helpful. Be concise but detailed when answering fitness or nutrition questions. Use markdown formatting.
+`;
+
+    const contents = [
+      {
+        role: 'user',
+        parts: [{ text: contextPrompt }]
+      },
+      ...history.map(h => ({
+        role: h.role,
+        parts: h.parts.map(p => ({ text: p.text }))
+      })),
+      {
+        role: 'user',
+        parts: [{ text: message }]
+      }
+    ];
+
+    const response = await generateWithFallback({
+      contents,
+      config: {
+        systemInstruction: "You are an expert fitness coach. Answer the user's message concisely and in markdown format."
+      }
+    });
+
+    return response.text;
+  } catch (error) {
+    console.error("Chatbot response error:", error);
+    throw new Error("Could not get a response from the coach at this time.");
   }
 };

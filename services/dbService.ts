@@ -17,7 +17,7 @@ import {
 } from 'firebase/firestore';
 import { UserProfile } from '../types';
 
-type LogCollection = 'meals' | 'workouts' | 'sleep' | 'water';
+type LogCollection = 'meals' | 'workouts' | 'sleep';
 
 
 // ----------------------------------------------------

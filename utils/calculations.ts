@@ -118,16 +118,11 @@ export const calculateDailyGoals = (profile: UserProfile): DailyGoals => {
     // --- Carbs: remaining calories -->
     const remainingCals = Math.max(0, calorieGoal - proteinCals - fatCals);
     const carbsG = Math.round(remainingCals / 4);
-  
-    // Water (ml)
-    const water = Math.round(weight > 0 ? weight * 35 : 2000);
-  
     return {
       calories: calorieGoal,
       protein: proteinG,
       carbs: carbsG,
       fat: fatG,
-      water,
     };
   };
   

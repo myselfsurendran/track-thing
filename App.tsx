@@ -4,18 +4,19 @@ import Header from './components/Header';
 import ConversationalInput from './components/ConversationalInput';
 import MealLogTable from './components/MealLogTable';
 import ProfileSetup from './components/ProfileSetup';
-import { MealLogEntry, UserProfile, DailyGoals, WorkoutLogEntry, SleepLogEntry, WaterLogEntry } from './types';
+import { MealLogEntry, UserProfile, DailyGoals, WorkoutLogEntry, SleepLogEntry, WeightLogEntry } from './types';
 import { parseMealFromText, parseWorkoutFromText, setApiKey } from './services/geminiService';
 import { calculateDailyGoals, calculateSleepScore } from './utils/calculations';
 import { encryptText, decryptText } from './utils/encryption';
 import ConversationalWorkoutInput from './components/ConversationalWorkoutInput';
 import WorkoutLogTable from './components/WorkoutLogTable';
 import SleepTracker from './components/SleepTracker';
+import WeightTracker from './components/WeightTracker';
+import AiCoach from './components/AiCoach';
 import RightPanel from './components/RightPanel';
 import GlobalActions from './components/GlobalActions';
 import SummaryModal from './components/SummaryModal';
 import SuggestionModal from './components/SuggestionModal';
-import WaterTracker from './components/WaterTracker';
 import Auth from './components/Auth';
 
 import { auth, signOutUser } from './services/firebase';
@@ -23,7 +24,7 @@ import { onAuthStateChanged, User, getAuth, updatePassword, EmailAuthProvider, r
 import * as dbService from './services/dbService';
 import { toLocalISODate } from './utils/dateHelpers';
 
-type Tab = 'Nutrition' | 'Workout' | 'Sleep' | 'Water';
+type Tab = 'Nutrition' | 'Workout' | 'Sleep' | 'Weight';
 
 const App: React.FC = () => {
   // ---------- state hooks (always present) ----------
@@ -31,7 +32,7 @@ const App: React.FC = () => {
   const [mealLog, setMealLog] = useState<MealLogEntry[]>([]);
   const [workoutLog, setWorkoutLog] = useState<WorkoutLogEntry[]>([]);
   const [sleepLog, setSleepLog] = useState<SleepLogEntry[]>([]);
-  const [waterLog, setWaterLog] = useState<WaterLogEntry[]>([]);
+  const [weightLog, setWeightLog] = useState<WeightLogEntry[]>([]);
 
   const [isLoggingMeal, setIsLoggingMeal] = useState(false);
   const [isLoggingWorkout, setIsLoggingWorkout] = useState(false);
@@ -69,7 +70,7 @@ const App: React.FC = () => {
         setMealLog([]);
         setWorkoutLog([]);
         setSleepLog([]);
-        setWaterLog([]);
+        setWeightLog([]);
         setProfileLoaded(false);
         setUserHasProfile(null);
         setIsLoading(false);
@@ -106,17 +107,16 @@ const App: React.FC = () => {
         setUserHasProfile(!!profile);
 
         if (profile) {
-          const [meals, workouts, sleep, water] = await Promise.all([
+          const [meals, workouts, sleep] = await Promise.all([
             dbService.getLogs<MealLogEntry>(user.uid, 'meals').catch(() => []),
             dbService.getLogs<WorkoutLogEntry>(user.uid, 'workouts').catch(() => []),
             dbService.getLogs<SleepLogEntry>(user.uid, 'sleep').catch(() => []),
-            dbService.getLogs<WaterLogEntry>(user.uid, 'water').catch(() => []),
           ]);
 
           setMealLog(Array.isArray(meals) ? meals : []);
           setWorkoutLog(Array.isArray(workouts) ? workouts : []);
           setSleepLog(Array.isArray(sleep) ? sleep : []);
-          setWaterLog(Array.isArray(water) ? water : []);
+          setWeightLog(profile.weightHistory || []);
         }
       } catch (e) {
         console.error('Error loading user data', e);
@@ -174,20 +174,6 @@ const App: React.FC = () => {
     }
   }, [authUser]);
 
-  const handleUpdateWater = useCallback(async (updatedWater: WaterLogEntry) => {
-    if (!authUser) return;
-    await dbService.updateLog(authUser.uid, 'water', updatedWater.id, updatedWater);
-    setWaterLog(prev => prev.map(w => (w.id === updatedWater.id ? updatedWater : w)));
-  }, [authUser]);
-
-  const handleDeleteWater = useCallback(async (id: string) => {
-    if (!authUser) return;
-    if (window.confirm('Are you sure you want to delete this entry?')) {
-      await dbService.deleteLog(authUser.uid, 'water', id);
-      setWaterLog(prev => prev.filter(w => w.id !== id));
-    }
-  }, [authUser]);
-
   const handleSaveProfile = useCallback(async (profile: UserProfile) => {
     if (!authUser) return;
     try {
@@ -221,6 +207,72 @@ const App: React.FC = () => {
       setError('Could not save your profile. Please try again.');
     }
   }, [authUser]);
+
+  const handleLogWeight = useCallback(async (weight: number) => {
+    if (weight <= 0 || !authUser || !userProfile) return;
+
+    const now = new Date();
+    const base = new Date(selectedDate);
+    base.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+
+    const newEntry: WeightLogEntry = {
+      id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2),
+      weight,
+      timestamp: base.toISOString(),
+    };
+    
+    const updatedWeightLog = [newEntry, ...weightLog];
+    setWeightLog(updatedWeightLog);
+
+    // Sort to find the latest log chronologically
+    const sorted = [...updatedWeightLog].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    
+    const updatedProfile = {
+      ...userProfile,
+      weightHistory: updatedWeightLog,
+      weight: sorted[0].id === newEntry.id ? weight : userProfile.weight
+    };
+
+    await handleSaveProfile(updatedProfile);
+  }, [authUser, selectedDate, userProfile, weightLog, handleSaveProfile]);
+
+  const handleDeleteWeight = useCallback(async (id: string) => {
+    if (!authUser || !userProfile) return;
+    if (window.confirm('Are you sure you want to delete this weight log?')) {
+      const updatedWeightLog = weightLog.filter(w => w.id !== id);
+      setWeightLog(updatedWeightLog);
+
+      const updatedProfile = {
+        ...userProfile,
+        weightHistory: updatedWeightLog
+      };
+      await handleSaveProfile(updatedProfile);
+    }
+  }, [authUser, userProfile, weightLog, handleSaveProfile]);
+
+  const handleSaveSummary = useCallback(async (dateStr: string, summary: string) => {
+    if (!authUser || !userProfile) return;
+    
+    const updatedSummaries = {
+      ...(userProfile.dailySummaries || {}),
+      [dateStr]: summary
+    };
+    
+    // Prune to latest 30 summaries
+    const keys = Object.keys(updatedSummaries).sort();
+    const pruned: Record<string, string> = {};
+    keys.slice(-30).forEach(k => {
+      pruned[k] = updatedSummaries[k];
+    });
+
+    const updatedProfile = {
+      ...userProfile,
+      dailySummaries: pruned
+    };
+
+    await handleSaveProfile(updatedProfile);
+  }, [authUser, userProfile, handleSaveProfile]);
+
 
   const handleLogMeal = useCallback(async (text: string) => {
     if (!authUser) return;
@@ -306,22 +358,7 @@ const App: React.FC = () => {
     setSleepLog(prev => [newEntry, ...prev]);
   }, [userProfile, authUser]);
 
-  const handleLogWater = useCallback(async (amount: number) => {
-    if (amount <= 0 || !authUser) return;
-    
-    
-    const now = new Date();
-    const base = new Date(selectedDate);
-    base.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
-    
-    
-    const newEntryData = {
-    amount,
-    timestamp: base.toISOString(),
-    };
-    const newEntry = await dbService.addLog(authUser.uid, 'water', newEntryData);
-    setWaterLog(prev => [newEntry, ...prev]);
-    }, [authUser, selectedDate]);
+
 
   const handleSignOut = useCallback(async () => {
     try {
@@ -360,6 +397,9 @@ const App: React.FC = () => {
   // ---------- date helpers & filtered logs (MUST run every render; keep above any early returns) ----------
   // local iso for selectedDate
   const selectedIso = useMemo(() => toLocalISODate(selectedDate), [selectedDate]);
+  const dateLabel = useMemo(() => {
+    return selectedDate.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  }, [selectedDate]);
 
   const filterByDate = useCallback((iso: string) => {
     return (timestamp?: string) => {
@@ -376,7 +416,8 @@ const App: React.FC = () => {
   const visibleMeals = useMemo(() => mealLog.filter(m => filterByDate(selectedIso)(m.timestamp)), [mealLog, filterByDate, selectedIso]);
   const visibleWorkouts = useMemo(() => workoutLog.filter(w => filterByDate(selectedIso)(w.timestamp)), [workoutLog, filterByDate, selectedIso]);
   const visibleSleep = useMemo(() => sleepLog.filter(s => filterByDate(selectedIso)(s.timestamp)), [sleepLog, filterByDate, selectedIso]);
-  const visibleWater = useMemo(() => waterLog.filter(w => filterByDate(selectedIso)(w.timestamp)), [waterLog, filterByDate, selectedIso]);
+  const visibleWeight = useMemo(() => weightLog.filter(w => filterByDate(selectedIso)(w.timestamp)), [weightLog, filterByDate, selectedIso]);
+
 
   // yesterday's date/is o and its visible logs
   const yesterdayDate = useMemo(() => {
@@ -390,7 +431,60 @@ const App: React.FC = () => {
   const visibleMealsYesterday = useMemo(() => mealLog.filter(m => filterByDate(yesterdayIso)(m.timestamp)), [mealLog, filterByDate, yesterdayIso]);
   const visibleWorkoutsYesterday = useMemo(() => workoutLog.filter(w => filterByDate(yesterdayIso)(w.timestamp)), [workoutLog, filterByDate, yesterdayIso]);
   const visibleSleepYesterday = useMemo(() => sleepLog.filter(s => filterByDate(yesterdayIso)(s.timestamp)), [sleepLog, filterByDate, yesterdayIso]);
-  const visibleWaterYesterday = useMemo(() => waterLog.filter(w => filterByDate(yesterdayIso)(w.timestamp)), [waterLog, filterByDate, yesterdayIso]);
+  const visibleWeightYesterday = useMemo(() => weightLog.filter(w => filterByDate(yesterdayIso)(w.timestamp)), [weightLog, filterByDate, yesterdayIso]);
+
+  const aiCoachContextData = useMemo(() => {
+    const totals = { calories: 0, protein: 0, carbs: 0, fat: 0 };
+    visibleMeals.forEach(m => {
+      const items = Array.isArray((m as any).items) ? (m as any).items : [];
+      items.forEach((item: any) => {
+        totals.calories += Number(item?.calories ?? 0);
+        totals.protein += Number(item?.protein ?? 0);
+        totals.carbs += Number(item?.carbs ?? 0);
+        totals.fat += Number(item?.fat ?? 0);
+      });
+    });
+
+    const yesterdayTotals = { calories: 0, protein: 0, carbs: 0, fat: 0 };
+    visibleMealsYesterday.forEach(m => {
+      const items = Array.isArray((m as any).items) ? (m as any).items : [];
+      items.forEach((item: any) => {
+        yesterdayTotals.calories += Number(item?.calories ?? 0);
+        yesterdayTotals.protein += Number(item?.protein ?? 0);
+        yesterdayTotals.carbs += Number(item?.carbs ?? 0);
+        yesterdayTotals.fat += Number(item?.fat ?? 0);
+      });
+    });
+
+    const steps = visibleWorkouts.reduce((sum, w) => sum + Number(w.steps ?? 0), 0);
+    const sortedWeights = [...weightLog]
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+      .map(w => ({
+        date: toLocalISODate(new Date(w.timestamp)),
+        weight: w.weight
+      }));
+
+    return {
+      caloriesGoal: dailyGoals?.calories ?? 2000,
+      caloriesConsumed: Math.round(totals.calories),
+      proteinGoal: dailyGoals?.protein ?? 120,
+      proteinConsumed: Math.round(totals.protein),
+      carbsGoal: dailyGoals?.carbs ?? 200,
+      carbsConsumed: Math.round(totals.carbs),
+      fatGoal: dailyGoals?.fat ?? 65,
+      fatConsumed: Math.round(totals.fat),
+      steps,
+      weightHistory: sortedWeights,
+      yesterday: {
+        calories: Math.round(yesterdayTotals.calories),
+        protein: Math.round(yesterdayTotals.protein),
+        carbs: Math.round(yesterdayTotals.carbs),
+        fat: Math.round(yesterdayTotals.fat),
+      },
+      recentSummaries: userProfile?.dailySummaries || {}
+    };
+  }, [visibleMeals, visibleMealsYesterday, visibleWorkouts, weightLog, dailyGoals, userProfile?.dailySummaries]);
+
 
   const latestSleep = visibleSleep.length > 0 ? [visibleSleep[0]] : [];
 
@@ -470,7 +564,10 @@ const App: React.FC = () => {
           mealLogYesterday={visibleMealsYesterday}
           workoutLogYesterday={visibleWorkoutsYesterday}
           sleepLogYesterday={visibleSleepYesterday}
-          // don't currently pass water explicitly; add if you want water comparison
+          dateLabel={dateLabel}
+          selectedIsoDate={selectedIso}
+          cachedSummary={userProfile?.dailySummaries?.[selectedIso]}
+          onSaveSummary={handleSaveSummary}
         />
       )}
 
@@ -520,7 +617,7 @@ const App: React.FC = () => {
                 <TabButton tabName="Nutrition" />
                 <TabButton tabName="Workout" />
                 <TabButton tabName="Sleep" />
-                <TabButton tabName="Water" />
+                <TabButton tabName="Weight" />
               </div>
             </div>
 
@@ -542,9 +639,11 @@ const App: React.FC = () => {
               <SleepTracker sleepLog={visibleSleep} onLogSleep={handleLogSleep} onUpdateSleep={handleUpdateSleep} onDeleteSleep={handleDeleteSleep} />
             )}
 
-            {activeTab === 'Water' && (
-              <WaterTracker waterLog={visibleWater} onLogWater={handleLogWater} onUpdateWater={handleUpdateWater} onDeleteWater={handleDeleteWater} />
+            {activeTab === 'Weight' && (
+              <WeightTracker weightLog={visibleWeight} onLogWeight={handleLogWeight} onDeleteWeight={handleDeleteWeight} />
             )}
+
+
           </div>
 
           <div className="lg:col-span-2 space-y-8">
@@ -555,7 +654,7 @@ const App: React.FC = () => {
               mealLog={mealLog}
               workoutLog={workoutLog}
               sleepLog={sleepLog}
-              waterLog={waterLog}
+              weightLog={weightLog}
               selectedDate={selectedDate}
               onChangePassword={handleChangePassword}
               onSaveProfile={handleSaveProfile}
@@ -563,6 +662,9 @@ const App: React.FC = () => {
           </div>
         </div>
       </main>
+      {userProfile && dailyGoals && (
+        <AiCoach userProfile={userProfile} dailyGoals={dailyGoals} contextData={aiCoachContextData} />
+      )}
     </div>
   );
 };

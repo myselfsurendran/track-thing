@@ -13,16 +13,17 @@ interface SummaryModalProps {
   mealLogToday: MealLogEntry[];
   workoutLogToday: WorkoutLogEntry[];
   sleepLogToday: SleepLogEntry[];
-  waterLogToday?: { amount: number; timestamp?: string }[];
 
   // Yesterday's logs (App will pass these)
   mealLogYesterday?: MealLogEntry[];
   workoutLogYesterday?: WorkoutLogEntry[];
   sleepLogYesterday?: SleepLogEntry[];
-  waterLogYesterday?: { amount: number; timestamp?: string }[];
 
   // Optional label to show the date being summarized
   dateLabel?: string;
+  selectedIsoDate: string;
+  cachedSummary?: string;
+  onSaveSummary: (dateStr: string, summary: string) => Promise<void>;
 }
 
 /* ---------------- helpers ---------------- */
@@ -64,7 +65,6 @@ const sumSleep = (sleep: SleepLogEntry[] = []) => {
   return { nights: sleep.length, avgDuration: avg, latestScore: scores.length ? scores[0] : 0 };
 };
 
-const sumWater = (water: { amount: number }[] = []) => (water || []).reduce((s, w) => s + Number(w?.amount ?? 0), 0);
 
 const percentChange = (today: number, yesterday: number) => {
   if (yesterday === 0) return today === 0 ? 0 : 100;
@@ -97,12 +97,13 @@ const SummaryModal: React.FC<SummaryModalProps> = ({
   mealLogToday,
   workoutLogToday,
   sleepLogToday,
-  waterLogToday = [],
   mealLogYesterday = [],
   workoutLogYesterday = [],
   sleepLogYesterday = [],
-  waterLogYesterday = [],
-  dateLabel
+  dateLabel,
+  selectedIsoDate,
+  cachedSummary,
+  onSaveSummary
 }) => {
 
   // --- aggregates ---
@@ -115,8 +116,7 @@ const SummaryModal: React.FC<SummaryModalProps> = ({
   const sleepToday = useMemo(() => sumSleep(sleepLogToday), [sleepLogToday]);
   const sleepYesterday = useMemo(() => sumSleep(sleepLogYesterday), [sleepLogYesterday]);
 
-  const waterToday = useMemo(() => sumWater(waterLogToday as any), [waterLogToday]);
-  const waterYesterday = useMemo(() => sumWater(waterLogYesterday as any), [waterLogYesterday]);
+
 
   // --- deltas ---
   const calDelta = mealToday.calories - mealYesterday.calories;
@@ -136,7 +136,7 @@ const SummaryModal: React.FC<SummaryModalProps> = ({
   if (gCalories && mealToday.calories < gCalories * 0.9) suggestions.push('You are below calorie target — if gaining muscle, consider adding a calorie-dense snack.');
   if (gCalories && mealToday.calories > gCalories * 1.15) suggestions.push('You exceeded calorie target by >15% — watch portion sizes if fat loss is a goal.');
   if (gProtein && mealToday.protein < gProtein * 0.9) suggestions.push('Protein is low — add a high-protein item (eg. greek yogurt, whey, chicken).');
-  if (waterToday < Math.max(500, (userProfile?.weight ?? 0) * 35 * 0.5)) suggestions.push('Water intake is low — aim to sip regularly.');
+
   if (workoutToday.sessions === 0 && (mealToday.calories > gCalories * 0.9)) suggestions.push('No workouts logged today but calories are near target — consider a light cardio or walk.');
   if (sleepToday.avgDuration < (userProfile?.sleepGoal?.targetMinutes ?? 480) * 0.9) suggestions.push('Sleep shorter than your goal — prioritize consistent bedtime.');
 
@@ -151,7 +151,7 @@ const SummaryModal: React.FC<SummaryModalProps> = ({
     lines.push('');
     lines.push(`Workouts: ${workoutToday.sessions} session(s), ${workoutToday.steps} steps, estimated ${Math.round(workoutToday.duration)} min total.`);
     lines.push(`Sleep: ${prettyNumber(sleepToday.avgDuration/60,1)} hrs avg (${sleepToday.nights} night(s)), latest score: ${prettyNumber(sleepToday.latestScore,0)}.`);
-    lines.push(`Water: ${Math.round(waterToday)} ml today.`);
+
     if (suggestions.length) {
       lines.push('');
       lines.push('Suggestions:');
@@ -160,12 +160,12 @@ const SummaryModal: React.FC<SummaryModalProps> = ({
     lines.push('');
     lines.push('Raw data (for AI):');
     lines.push(JSON.stringify({
-      mealsToday: mealLogToday, workoutsToday: workoutLogToday, sleepToday: sleepLogToday, waterToday,
-      mealsYesterday: mealLogYesterday, workoutsYesterday: workoutLogYesterday, sleepYesterday: sleepLogYesterday, waterYesterday
+      mealsToday: mealLogToday, workoutsToday: workoutLogToday, sleepToday: sleepLogToday,
+      mealsYesterday: mealLogYesterday, workoutsYesterday: workoutLogYesterday, sleepYesterday: sleepLogYesterday
     }, null, 2));
     return lines.join('\n');
   };
-  const plainText = useMemo(buildPlainText, [mealLogToday, workoutLogToday, sleepLogToday, mealLogYesterday, workoutLogYesterday, sleepLogYesterday, waterToday, waterYesterday, dateLabel]);
+  const plainText = useMemo(buildPlainText, [mealLogToday, workoutLogToday, sleepLogToday, mealLogYesterday, workoutLogYesterday, sleepLogYesterday, dateLabel]);
 
   // --- AI state ---
   const [aiSummaryMarkdown, setAiSummaryMarkdown] = useState<string | null>(null);
@@ -181,26 +181,66 @@ const SummaryModal: React.FC<SummaryModalProps> = ({
     return () => { mountedRef.current = false; };
   }, []);
 
+  const handleFetch = async (forceRegenerate = false) => {
+    if (!userProfile?.id) return;
+    setAiLoading(true);
+    setAiError(null);
+
+    try {
+      if (!forceRegenerate && cachedSummary) {
+        if (mountedRef.current) {
+          setAiSummaryMarkdown(cachedSummary.trim());
+          setAiLoading(false);
+        }
+        return;
+      }
+
+      // Call Gemini API
+      const res = await getDailySummary(
+        userProfile,
+        mealLogToday,
+        workoutLogToday,
+        sleepLogToday,
+        dailyGoals,
+        { mealLogYesterday, workoutLogYesterday, sleepLogYesterday }
+      );
+
+      if (!mountedRef.current) return;
+      setAiSummaryMarkdown(res?.trim() || null);
+
+      // Save to cache/Firestore
+      if (res) {
+        await onSaveSummary(selectedIsoDate, res.trim());
+      }
+    } catch (err) {
+      if (!mountedRef.current) return;
+      console.error('AI summary failed:', err);
+      setAiError(err instanceof Error ? err.message : String(err));
+      setAiSummaryMarkdown(null);
+    } finally {
+      if (mountedRef.current) {
+        setAiLoading(false);
+      }
+    }
+  };
+
   useEffect(() => {
     // Build a compact key representing the inputs that should trigger a new request.
-    // JSON.stringify is cheap enough here; if logs get enormous you can hash or reduce shape.
     const keyObj = {
       profileId: userProfile?.id ?? userProfile?.username ?? null,
+      selectedIsoDate,
+      hasCache: !!cachedSummary,
       goals: dailyGoals ?? null,
-      // include counts and timestamps to avoid serializing entire nested objects if large
       todayCounts: {
         meals: mealLogToday.length,
         workouts: workoutLogToday.length,
-        sleep: sleepLogToday.length,
-        water: (waterLogToday || []).length
+        sleep: sleepLogToday.length
       },
       yesterdayCounts: {
         meals: mealLogYesterday.length,
         workouts: workoutLogYesterday.length,
-        sleep: sleepLogYesterday.length,
-        water: (waterLogYesterday || []).length
+        sleep: sleepLogYesterday.length
       },
-      // last timestamps to detect changes in logs
       todayLastTimestamps: {
         meals: mealLogToday[0]?.timestamp ?? null,
         workouts: workoutLogToday[0]?.timestamp ?? null,
@@ -214,49 +254,19 @@ const SummaryModal: React.FC<SummaryModalProps> = ({
     };
     const newKey = JSON.stringify(keyObj);
 
-    // If key unchanged and we have a result (or had an error), skip re-fetching.
     if (lastRequestKeyRef.current === newKey && (aiSummaryMarkdown !== null || aiError !== null)) {
       setAiLoading(false);
       return;
     }
 
-    // update last key and fetch
     lastRequestKeyRef.current = newKey;
-    let cancelled = false;
-    const fetchAiSummary = async () => {
-      setAiLoading(true);
-      setAiError(null);
-      try {
-        const res = await getDailySummary(
-          userProfile,
-          mealLogToday,
-          workoutLogToday,
-          sleepLogToday,
-          dailyGoals,
-          { mealLogYesterday, workoutLogYesterday, sleepLogYesterday, waterLogYesterday }
-        );
-        if (cancelled || !mountedRef.current) return;
-        setAiSummaryMarkdown(res?.trim() || null);
-      } catch (err) {
-        if (cancelled || !mountedRef.current) return;
-        console.error('AI summary failed:', err);
-        setAiError(err instanceof Error ? err.message : String(err));
-        setAiSummaryMarkdown(null);
-      } finally {
-        if (cancelled || !mountedRef.current) return;
-        setAiLoading(false);
-      }
-    };
-
-    fetchAiSummary();
-
-    // cancel function for race conditions/unmount
-    return () => { cancelled = true; };
+    handleFetch(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    // Keep deps minimal & stable — the key above uses the detailed inputs.
     userProfile?.id,
-    dailyGoals && JSON.stringify({ c: dailyGoals.calories, p: dailyGoals.protein }), // cheap check
+    selectedIsoDate,
+    cachedSummary,
+    dailyGoals && JSON.stringify({ c: dailyGoals.calories, p: dailyGoals.protein }),
     mealLogToday.length,
     workoutLogToday.length,
     sleepLogToday.length,
@@ -269,9 +279,6 @@ const SummaryModal: React.FC<SummaryModalProps> = ({
     mealLogYesterday[0]?.timestamp,
     workoutLogYesterday[0]?.timestamp,
     sleepLogYesterday[0]?.timestamp,
-    // water lists
-    (waterLogToday || []).length,
-    (waterLogYesterday || []).length
   ]);
 
   // --- small UI ---
@@ -292,7 +299,14 @@ const SummaryModal: React.FC<SummaryModalProps> = ({
             <div className="text-sm text-slate-600">A concise, data-driven recap (AI-assisted)</div>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={onClose} className="text-sm px-3 py-2 bg-white border rounded-md">Close</button>
+            <button 
+              onClick={() => handleFetch(true)} 
+              disabled={aiLoading}
+              className="text-xs px-3 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-md font-semibold transition disabled:opacity-50"
+            >
+              {aiLoading ? 'Loading...' : 'Regenerate'}
+            </button>
+            <button onClick={onClose} className="text-xs px-3 py-2 bg-white hover:bg-slate-50 border border-slate-200 rounded-md font-semibold transition">Close</button>
           </div>
         </div>
 
@@ -371,20 +385,13 @@ const SummaryModal: React.FC<SummaryModalProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-white rounded-md shadow p-4">
-              <h3 className="text-lg font-semibold text-indigo-600 mb-2">Hydration</h3>
-              <div className="text-slate-700">{`You drank ${Math.round(waterToday)} ml today (${Math.round(waterYesterday)} ml yesterday).`}</div>
-            </div>
-
-            <div className="bg-white rounded-md shadow p-4">
-              <h3 className="text-lg font-semibold text-indigo-600 mb-2">Actionable Suggestions</h3>
-              {suggestions.length ? (
-                <ol className="list-decimal list-inside text-slate-700">
-                  {suggestions.map((s, i) => <li key={i}>{s}</li>)}
-                </ol>
-              ) : <div className="text-slate-600">No urgent suggestions — keep it up 👍</div>}
-            </div>
+          <div className="bg-white rounded-md shadow p-4">
+            <h3 className="text-lg font-semibold text-indigo-600 mb-2">Actionable Suggestions</h3>
+            {suggestions.length ? (
+              <ol className="list-decimal list-inside text-slate-700">
+                {suggestions.map((s, i) => <li key={i}>{s}</li>)}
+              </ol>
+            ) : <div className="text-slate-600">No urgent suggestions — keep it up 👍</div>}
           </div>
         </div>
       </div>
